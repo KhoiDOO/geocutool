@@ -190,7 +190,7 @@ namespace gs_aabb
             covi);
     }
 
-    __device__ bool aabb_inside_voxel(
+    __device__ __forceinline__ bool aabb_inside_voxel(
         const float3 &gs_ab_min,
         const float3 &gs_ab_max,
         const float3 &vx_ab_min,
@@ -205,7 +205,7 @@ namespace gs_aabb
             (vx_ab_max.z) >= gs_ab_max.z);
     }
 
-    __device__ bool aabb_overlap_voxel(
+    __device__ __forceinline__ bool aabb_overlap_voxel(
         const float3 &gs_ab_min,
         const float3 &gs_ab_max,
         const float3 &vx_ab_min,
@@ -228,7 +228,7 @@ namespace gs_aabb
         return true;
     }
 
-    __device__ bool edge_test(
+    __device__ __forceinline__ bool edge_test(
         const float c0,
         const float c1,
         const float c2,
@@ -261,7 +261,7 @@ namespace gs_aabb
         return false;
     }
 
-    __device__ bool gs_intersect_voxel_edge(
+    __device__ __forceinline__ bool gs_intersect_voxel_edge(
         const float3 &mean,
         const float *covi,
         const float3 &vx_ab_min,
@@ -291,7 +291,7 @@ namespace gs_aabb
         return false;
     }
 
-    __device__ bool facetest(
+    __device__ __forceinline__ bool facetest(
         const float *p,
         float *q,
         const float vsize,
@@ -314,7 +314,7 @@ namespace gs_aabb
         return false;
     }
 
-    __device__ bool gs_intersect_voxel_face(
+    __device__ __forceinline__ bool gs_intersect_voxel_face(
         const float3 &mean,
         float3 cp0,
         float3 cp1,
@@ -339,7 +339,7 @@ namespace gs_aabb
         return (b[0] || b[1] || b[2] || b[3] || b[4] || b[5]);
     }
 
-    __device__ bool gs_intersect_voxel(
+    __device__ __forceinline__ bool gs_intersect_voxel(
         const uint64_t gaus_idx,
         const float3& mean, 
         const float* covi, 
@@ -364,6 +364,91 @@ namespace gs_aabb
         return gs_intersect_voxel_edge(mean, covi, vx_ab_min, vx_ab_max, iso);
     }
 
+    __device__ __forceinline__ void compute_aabb_centroid(
+        const float3 &gs_ab_min,
+        const float3 &gs_ab_max,
+        float3 &out_centroid)
+    {
+        out_centroid = make_float3(
+            (gs_ab_min.x + gs_ab_max.x) * 0.5f,
+            (gs_ab_min.y + gs_ab_max.y) * 0.5f,
+            (gs_ab_min.z + gs_ab_max.z) * 0.5f
+        );
+    }
+
+    __device__ __forceinline__ void compute_density(
+        const float3& point,
+        const float3& mean,
+        const float* covi,
+        const float opacity,
+        float& out_density
+    ) {
+        float3 d = make_float3(point.x - mean.x, point.y - mean.y, point.z - mean.z);
+        
+        float power = -0.5f * (
+            d.x * (d.x * covi[0] + d.y * covi[1] + d.z * covi[2]) +
+            d.y * (d.x * covi[1] + d.y * covi[3] + d.z * covi[4]) +
+            d.z * (d.x * covi[2] + d.y * covi[4] + d.z * covi[5])
+        );
+
+        if (power > 0.0f || power < -15.0f) {
+            out_density = 0.0f;
+        } else {
+            out_density = opacity * expf(power);
+        }
+    }
+
+    __device__ __forceinline__ void compute_overlap_metrics(
+        const float3& gs_ab_min, 
+        const float3& gs_ab_max,
+        const float3& vx_ab_min, 
+        const float3& vx_ab_max,
+        const float3& mean,
+        const float* covi,
+        const float opacity,
+        const bool return_centroids,
+        float3& out_centroid,
+        float& out_density,
+        float& out_aspect_ratio,
+        float& out_penetration
+    ) {
+        // 1. Calculate Overlap Box boundaries
+        float3 overlap_min = make_float3(
+            fmaxf(gs_ab_min.x, vx_ab_min.x), 
+            fmaxf(gs_ab_min.y, vx_ab_min.y), 
+            fmaxf(gs_ab_min.z, vx_ab_min.z)
+        );
+
+        float3 overlap_max = make_float3(
+            fminf(gs_ab_max.x, vx_ab_max.x), 
+            fminf(gs_ab_max.y, vx_ab_max.y), 
+            fminf(gs_ab_max.z, vx_ab_max.z)
+        );
+
+        if (return_centroids) {
+            compute_aabb_centroid(overlap_min, overlap_max, out_centroid);
+            compute_density(out_centroid, mean, covi, opacity, out_density);
+        }
+
+        // 3. Get the physical dimensions of the overlap box
+        float3 dims = make_float3(
+            fmaxf(0.0f, overlap_max.x - overlap_min.x),
+            fmaxf(0.0f, overlap_max.y - overlap_min.y),
+            fmaxf(0.0f, overlap_max.z - overlap_min.z)
+        );
+
+        // 4. Find the smallest and largest dimensions
+        float min_dim = fminf(dims.x, fminf(dims.y, dims.z));
+        float max_dim = fmaxf(dims.x, fmaxf(dims.y, dims.z));
+        
+        // Assume cubic voxels: size is max - min on any axis
+        float voxel_size = vx_ab_max.x - vx_ab_min.x; 
+
+        // 5. Calculate Metrics (with safeguards against divide-by-zero)
+        out_aspect_ratio = (max_dim > 1e-6f) ? (min_dim / max_dim) : 0.0f;
+        out_penetration  = (voxel_size > 1e-6f) ? (min_dim / voxel_size) : 0.0f;
+    }
+
     __global__ void query_gs_voxel_intersection_brute_force_kernel(
         const uint32_t num_voxels,
         const uint32_t num_gaussians,
@@ -371,13 +456,19 @@ namespace gs_aabb
         const float3* __restrict__ vx_aabb_maxs,
         const float3* __restrict__ means,
         const float* __restrict__ covis,
+        const float* __restrict__ opacities,
         const float3* __restrict__ gs_aabb_mins,
         const float3* __restrict__ gs_aabb_maxs,
         const float3* __restrict__ contact_points,
         const float iso,
+        const float ar_threshold,
+        const float p_threshold,
+        const bool return_centroids,
         bool* __restrict__ hit_mask,
         int64_t* __restrict__ out_voxel_ids,
         int64_t* __restrict__ out_gaus_ids,
+        float3* __restrict__ centroids,
+        float* __restrict__ densities,
         int64_t* __restrict__ global_counter,
         const int64_t max_capacity
     ) {
@@ -392,13 +483,13 @@ namespace gs_aabb
         for (uint32_t g_idx = 0; g_idx < num_gaussians; g_idx++) {
             float3 mean = means[g_idx];
             const float* covi = covis + (g_idx * 6);
+            float opacity = opacities[g_idx];
             float3 gs_ab_min = gs_aabb_mins[g_idx];
             float3 gs_ab_max = gs_aabb_maxs[g_idx];
             float3 cp0 = contact_points[g_idx * 3 + 0];
             float3 cp1 = contact_points[g_idx * 3 + 1];
             float3 cp2 = contact_points[g_idx * 3 + 2];
 
-            // Your mathematically perfect 4-stage funnel
             bool hit = gs_intersect_voxel(
                 g_idx, 
                 mean, 
@@ -414,12 +505,40 @@ namespace gs_aabb
             );
 
             if (hit) {
-                any_hit = true;
-                uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)global_counter, 1ULL);
-                
-                if (write_idx < max_capacity) {
-                    out_voxel_ids[write_idx] = v_idx;
-                    out_gaus_ids[write_idx] = g_idx;
+                float3 centroid;
+                float density;
+                float aspect_ratio;
+                float penetration;
+
+                // Calculate the metrics of the intersection
+                compute_overlap_metrics(
+                    gs_ab_min, 
+                    gs_ab_max, 
+                    vx_ab_min, 
+                    vx_ab_max, 
+                    mean,
+                    covi,
+                    opacity,
+                    return_centroids,
+                    centroid, 
+                    density,
+                    aspect_ratio, 
+                    penetration
+                );
+
+                if (aspect_ratio >= ar_threshold && penetration >= p_threshold) {
+                    any_hit = true;
+                    uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)global_counter, 1ULL);
+                    
+                    if (write_idx < max_capacity) {
+                        out_voxel_ids[write_idx] = v_idx;
+                        out_gaus_ids[write_idx] = g_idx;
+
+                        if (return_centroids) {
+                            centroids[write_idx] = centroid;
+                            densities[write_idx] = density;
+                        }
+                    }
                 }
             }
         }
@@ -434,13 +553,19 @@ namespace gs_aabb
         const float3* __restrict__ vx_aabb_maxs,
         const float3* __restrict__ means,
         const float* __restrict__ covis,
+        const float* __restrict__ opacities,
         const float3* __restrict__ gs_aabb_mins,
         const float3* __restrict__ gs_aabb_maxs,
         const float3* __restrict__ contact_points,
         const float iso,
+        const float ar_threshold,
+        const float p_threshold,
+        const bool return_centroids,
         bool* __restrict__ hit_mask,
         int64_t* __restrict__ out_voxel_ids,
         int64_t* __restrict__ out_gaus_ids,
+        float3* __restrict__ centroids,
+        float* __restrict__ densities,
         int64_t* __restrict__ global_counter,
         const int64_t max_capacity
     ) {
@@ -454,13 +579,19 @@ namespace gs_aabb
             vx_aabb_maxs,
             means,
             covis,
+            opacities,
             gs_aabb_mins,
             gs_aabb_maxs,
             contact_points,
             iso,
+            ar_threshold,
+            p_threshold,
+            return_centroids,
             hit_mask,
             out_voxel_ids,
             out_gaus_ids,
+            centroids,
+            densities,
             global_counter,
             max_capacity
         );
