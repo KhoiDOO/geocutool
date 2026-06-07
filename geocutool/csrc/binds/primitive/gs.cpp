@@ -192,28 +192,101 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
     }
 }
 
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> query_gs_edge_intersection_brute_force_wrapper(
+    const torch::Tensor &edge_starts,
+    const torch::Tensor &edge_ends,
+    const torch::Tensor &means,
+    const torch::Tensor &covis,
+    const float iso,
+    const int64_t max_capacity)
+{
+    // 1. Enforce memory contiguity and CUDA residency
+    CHECK_INPUT(edge_starts);
+    CHECK_INPUT(edge_ends);
+    CHECK_INPUT(means);
+    CHECK_INPUT(covis);
+
+    // 2. Enforce Data Types
+    TORCH_CHECK(edge_starts.scalar_type() == torch::kFloat32, "edge_starts must be float32");
+    TORCH_CHECK(edge_ends.scalar_type() == torch::kFloat32, "edge_ends must be float32");
+    TORCH_CHECK(means.scalar_type() == torch::kFloat32, "means must be float32");
+    TORCH_CHECK(covis.scalar_type() == torch::kFloat32, "covis must be float32");
+
+    // 3. Extract dimensions and validate shapes
+    const uint32_t num_edges = edge_starts.size(0);
+    const uint32_t num_gaussians = means.size(0);
+    
+    TORCH_CHECK(edge_starts.size(1) == 3, "edge_starts must have shape (E, 3)");
+    TORCH_CHECK(edge_ends.size(0) == num_edges && edge_ends.size(1) == 3, "edge_ends must match edge_starts");
+    TORCH_CHECK(means.size(1) == 3, "means must have shape (N, 3)");
+    TORCH_CHECK(covis.size(0) == num_gaussians && covis.size(1) == 6, "covis must have shape (N, 6)");
+
+    // 4. Allocate Output Tensors
+    auto options = means.options();
+    torch::Tensor hit_mask = torch::zeros({num_edges}, options.dtype(torch::kBool));
+    torch::Tensor out_edge_ids = torch::empty({max_capacity}, options.dtype(torch::kInt64));
+    torch::Tensor out_gaus_ids = torch::empty({max_capacity}, options.dtype(torch::kInt64));
+    torch::Tensor global_counter = torch::zeros({1}, options.dtype(torch::kInt64));
+
+    // 5. Launch the CUDA Kernel
+    gs_aabb::query_gs_edge_intersection_brute_force(
+        num_edges,
+        num_gaussians,
+        reinterpret_cast<const float3 *>(edge_starts.data_ptr<float>()),
+        reinterpret_cast<const float3 *>(edge_ends.data_ptr<float>()),
+        reinterpret_cast<const float3 *>(means.data_ptr<float>()),
+        reinterpret_cast<const float *>(covis.data_ptr<float>()),
+        iso,
+        reinterpret_cast<bool *>(hit_mask.data_ptr<bool>()),
+        reinterpret_cast<int64_t *>(out_edge_ids.data_ptr<int64_t>()),
+        reinterpret_cast<int64_t *>(out_gaus_ids.data_ptr<int64_t>()),
+        reinterpret_cast<int64_t *>(global_counter.data_ptr<int64_t>()),
+        max_capacity);
+
+    // 6. Return sliced arrays
+    int64_t num_intersections = global_counter.item<int64_t>();
+    if (num_intersections > max_capacity) {
+        TORCH_WARN("Exceeded max capacity! Found ", num_intersections, " hits but capacity was ", max_capacity);
+    }
+    int64_t valid_hits = std::min(num_intersections, max_capacity);
+
+    return std::make_tuple(
+        hit_mask,
+        out_edge_ids.slice(0, 0, valid_hits), 
+        out_gaus_ids.slice(0, 0, valid_hits)
+    );
+}
+
 void bind_primitive_gs(py::module_ &m)
 {
     m.def("compute_aabb_wrapper", &compute_aabb_wrapper, "Compute AABB for 3D Gaussians",
-          py::arg("means"),
-          py::arg("rotations"),
-          py::arg("scales"),
-          py::arg("iso"),
-          py::arg("tol"),
-          py::arg("level"),
-          py::arg("rotnorm") = false);
+        py::arg("means"),
+        py::arg("rotations"),
+        py::arg("scales"),
+        py::arg("iso"),
+        py::arg("tol"),
+        py::arg("level"),
+        py::arg("rotnorm") = false);
     m.def("query_gs_voxel_intersection_brute_force_wrapper", &query_gs_voxel_intersection_brute_force_wrapper, "Query Gaussian-Voxel Intersections (Brute Force)",
-          py::arg("vx_aabb_mins"),
-          py::arg("vx_aabb_maxs"),
-          py::arg("means"),
-          py::arg("covis"),
-          py::arg("opacities"),
-          py::arg("gs_aabb_mins"),
-          py::arg("gs_aabb_maxs"),
-          py::arg("contact_points"),
-          py::arg("iso"),
-          py::arg("ar_threshold"),
-          py::arg("p_threshold"),
-          py::arg("return_centroids") = false,
-          py::arg("max_capacity") = 10000000);
+        py::arg("vx_aabb_mins"),
+        py::arg("vx_aabb_maxs"),
+        py::arg("means"),
+        py::arg("covis"),
+        py::arg("opacities"),
+        py::arg("gs_aabb_mins"),
+        py::arg("gs_aabb_maxs"),
+        py::arg("contact_points"),
+        py::arg("iso"),
+        py::arg("ar_threshold"),
+        py::arg("p_threshold"),
+        py::arg("return_centroids") = false,
+        py::arg("max_capacity") = 10000000);
+    m.def("query_gs_edge_intersection_brute_force_wrapper", &query_gs_edge_intersection_brute_force_wrapper, "Query Gaussian-Edge Intersections (Brute Force)",
+        py::arg("edge_starts"),
+        py::arg("edge_ends"),
+        py::arg("means"),
+        py::arg("covis"),
+        py::arg("iso"),
+        py::arg("max_capacity") = 10000000
+    );
 }
