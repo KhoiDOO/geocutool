@@ -7,7 +7,7 @@ pip install -e . --no-build-isolation
 
 # or 
 
-pip install https://github.com/KhoiDOO/geocutool.git --no-build-isolation
+pip install git+https://github.com/KhoiDOO/geocutool.git --no-build-isolation
 ```
 
 ## Tested Env
