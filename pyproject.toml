@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geocutool"
-version = "0.0.3"
+version = "0.0.4"
 description = "Geometric Cuda Tool Box"
 readme = "README.md"
 license = {text = "MIT"}
@@ -46,9 +46,6 @@ Repository = "https://github.com/KhoiDOO/geocutool.git"
 Documentation = "https://github.com/KhoiDOO/geocutool#readme"
 Issues = "https://github.com/KhoiDOO/geocutool/issues"
 
-# ------------------------------------------------------------------------------
-# SETUPTOOLS CONFIGURATION
-# ------------------------------------------------------------------------------
 [tool.setuptools.packages.find]
 include = ["geocutool*"]
 exclude = ["examples*", "tests*"]
@@ -57,9 +54,6 @@ exclude = ["examples*", "tests*"]
 # Ensure the compiled C++/CUDA binaries and typing stubs are bundled into the wheel!
 "geocutool" = ["py.typed", "*.so", "*.pyd", "*.pyi", "*.dll"]
 
-# ------------------------------------------------------------------------------
-# LINTER & TYPE CHECKER CONFIGURATION
-# ------------------------------------------------------------------------------
 [tool.black]
 line-length = 100
 target-version = ["py310"]
