@@ -228,7 +228,7 @@ namespace gs_aabb
         return true;
     }
 
-    __device__ __forceinline__ bool edge_test(
+    __device__ __forceinline__ bool gs_vx_edge_test(
         const float c0,
         const float c1,
         const float c2,
@@ -275,15 +275,15 @@ namespace gs_aabb
         // if edge crossings, true true
         for (int i = 0; i < 4; i++)
         {
-            if (edge_test(covi[0], covi[1], covi[2], covi[3], covi[4], covi[5], iso,
+            if (gs_vx_edge_test(covi[0], covi[1], covi[2], covi[3], covi[4], covi[5], iso,
                           p.y + (i / 2 ? vsize : 0.0), p.z + (i % 2 ? vsize : 0.0), p.x, p.x + vsize))
                 return true;
 
-            if (edge_test(covi[3], covi[1], covi[4], covi[0], covi[2], covi[5], iso,
+            if (gs_vx_edge_test(covi[3], covi[1], covi[4], covi[0], covi[2], covi[5], iso,
                           p.x + (i / 2 ? vsize : 0.0), p.z + (i % 2 ? vsize : 0.0), p.y, p.y + vsize))
                 return true;
 
-            if (edge_test(covi[5], covi[2], covi[4], covi[0], covi[1], covi[3], iso,
+            if (gs_vx_edge_test(covi[5], covi[2], covi[4], covi[0], covi[1], covi[3], iso,
                           p.x + (i / 2 ? vsize : 0.0), p.y + (i % 2 ? vsize : 0.0), p.z, p.z + vsize))
                 return true;
         }
@@ -291,7 +291,7 @@ namespace gs_aabb
         return false;
     }
 
-    __device__ __forceinline__ bool facetest(
+    __device__ __forceinline__ bool gs_vx_face_test(
         const float *p,
         float *q,
         const float vsize,
@@ -327,16 +327,73 @@ namespace gs_aabb
         bool b[6];
 
         // need to index float3 components, so cast to float[]
-        b[0] = facetest((float *)(&p), (float *)(&cp0), vsize, 0, 1, 2, 0.0);
-        b[1] = facetest((float *)(&p), (float *)(&cp0), vsize, 0, 1, 2, vsize);
+        b[0] = gs_vx_face_test((float *)(&p), (float *)(&cp0), vsize, 0, 1, 2, 0.0);
+        b[1] = gs_vx_face_test((float *)(&p), (float *)(&cp0), vsize, 0, 1, 2, vsize);
 
-        b[2] = facetest((float *)(&p), (float *)(&cp1), vsize, 1, 0, 2, 0.0);
-        b[3] = facetest((float *)(&p), (float *)(&cp1), vsize, 1, 0, 2, vsize);
+        b[2] = gs_vx_face_test((float *)(&p), (float *)(&cp1), vsize, 1, 0, 2, 0.0);
+        b[3] = gs_vx_face_test((float *)(&p), (float *)(&cp1), vsize, 1, 0, 2, vsize);
 
-        b[4] = facetest((float *)(&p), (float *)(&cp2), vsize, 2, 0, 1, 0.0);
-        b[5] = facetest((float *)(&p), (float *)(&cp2), vsize, 2, 0, 1, vsize);
+        b[4] = gs_vx_face_test((float *)(&p), (float *)(&cp2), vsize, 2, 0, 1, 0.0);
+        b[5] = gs_vx_face_test((float *)(&p), (float *)(&cp2), vsize, 2, 0, 1, vsize);
 
         return (b[0] || b[1] || b[2] || b[3] || b[4] || b[5]);
+    }
+
+    __device__ __forceinline__ bool gs_edge_test(
+        const float c0, const float c1, const float c2,
+        const float c3, const float c4, const float c5,
+        const float iso,
+        const float3& edge_start,
+        const float3& edge_end
+    ) {
+        // d = P1 - P0
+        float3 d = make_float3(
+            edge_end.x - edge_start.x, 
+            edge_end.y - edge_start.y, 
+            edge_end.z - edge_start.z
+        );
+
+        // Sigma^-1 * d
+        float3 v_d = make_float3(
+            c0 * d.x + c1 * d.y + c2 * d.z,
+            c1 * d.x + c3 * d.y + c4 * d.z,
+            c2 * d.x + c4 * d.y + c5 * d.z
+        );
+
+        // Sigma^-1 * P0
+        float3 v_p0 = make_float3(
+            c0 * edge_start.x + c1 * edge_start.y + c2 * edge_start.z,
+            c1 * edge_start.x + c3 * edge_start.y + c4 * edge_start.z,
+            c2 * edge_start.x + c4 * edge_start.y + c5 * edge_start.z
+        );
+
+        // A = d^T * (Sigma^-1 * d)
+        float a = d.x * v_d.x + d.y * v_d.y + d.z * v_d.z;
+        
+        // B = 2 * P0^T * (Sigma^-1 * d)
+        float b = 2.0f * (edge_start.x * v_d.x + edge_start.y * v_d.y + edge_start.z * v_d.z);
+        
+        // C = P0^T * (Sigma^-1 * P0) - iso
+        float c = (edge_start.x * v_p0.x + edge_start.y * v_p0.y + edge_start.z * v_p0.z) - iso;
+
+        // B^2 - 4AC
+        float dcrm = fmaxf(b * b - 4.0f * a * c, 0.0f);
+
+        // 6. Check for Intersection
+        if (dcrm > 0.0f) {
+            // Calculate the two roots (t_entry and t_exit)
+            float rdcrm = sqrtf(dcrm) / (2.0f * a); 
+            float midpoint = -b / (2.0f * a);
+            
+            float t_entry = midpoint - rdcrm;
+            float t_exit  = midpoint + rdcrm;
+
+            // If it exits before t=0.0, it's behind the start point.
+            // If it enters after t=1.0, it's past the end point.
+            return !(1.0f <= t_entry || t_exit <= 0.0f);
+        }
+
+        return false;
     }
 
     __device__ __forceinline__ bool gs_intersect_voxel(
@@ -352,7 +409,7 @@ namespace gs_aabb
         const float3& vx_ab_max,
         const float iso) {
 
-        if (aabb_inside_voxel(gs_ab_min, gs_ab_max, vx_ab_min, vx_ab_max)) 
+        if (aabb_inside_voxel(gs_ab_min, gs_ab_max, vx_ab_min, vx_ab_max))
             return true;
 
         if (!aabb_overlap_voxel(gs_ab_min, gs_ab_max, vx_ab_min, vx_ab_max))
@@ -592,6 +649,98 @@ namespace gs_aabb
             out_gaus_ids,
             centroids,
             densities,
+            global_counter,
+            max_capacity
+        );
+    }
+
+    __global__ void query_gs_edge_intersection_brute_force_kernel(
+        const uint32_t num_edges,
+        const uint32_t num_gaussians,
+        const float3* __restrict__ edge_starts,
+        const float3* __restrict__ edge_ends,
+        const float3* __restrict__ means,
+        const float* __restrict__ covis,
+        const float iso,
+        bool* __restrict__ hit_mask,
+        int64_t* __restrict__ out_edge_ids,
+        int64_t* __restrict__ out_gaus_ids,
+        int64_t* __restrict__ global_counter,
+        const int64_t max_capacity
+    ) {
+        uint32_t e_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (e_idx >= num_edges) return;
+
+        float3 edge_start = edge_starts[e_idx];
+        float3 edge_end = edge_ends[e_idx];
+
+        bool any_hit = false;
+
+        for (uint32_t g_idx = 0; g_idx < num_gaussians; g_idx++) {
+            float3 mean = means[g_idx];
+            const float* covi = covis + (g_idx * 6);
+
+            float3 local_start = make_float3(
+                edge_start.x - mean.x,
+                edge_start.y - mean.y,
+                edge_start.z - mean.z
+            );
+            
+            float3 local_end = make_float3(
+                edge_end.x - mean.x,
+                edge_end.y - mean.y,
+                edge_end.z - mean.z
+            );
+
+            bool hit = gs_edge_test(
+                covi[0], covi[1], covi[2], covi[3], covi[4], covi[5],
+                iso,
+                local_start,
+                local_end
+            );
+
+            if (hit) {
+                any_hit = true;
+                uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)global_counter, 1ULL);
+                
+                if (write_idx < max_capacity) {
+                    out_edge_ids[write_idx] = e_idx;
+                    out_gaus_ids[write_idx] = g_idx;
+                }
+            }
+        }
+
+        hit_mask[e_idx] = any_hit;
+    }
+
+    void query_gs_edge_intersection_brute_force(
+        const uint32_t num_edges,
+        const uint32_t num_gaussians,
+        const float3* __restrict__ edge_starts,
+        const float3* __restrict__ edge_ends,
+        const float3* __restrict__ means,
+        const float* __restrict__ covis,
+        const float iso,
+        bool* __restrict__ hit_mask,
+        int64_t* __restrict__ out_edge_ids,
+        int64_t* __restrict__ out_gaus_ids,
+        int64_t* __restrict__ global_counter,
+        const int64_t max_capacity
+    ) {
+        uint32_t threads = 256;
+        uint32_t blocks = (num_edges + threads - 1) / threads;
+
+        query_gs_edge_intersection_brute_force_kernel<<<blocks, threads>>>(
+            num_edges,
+            num_gaussians,
+            edge_starts,
+            edge_ends,
+            means,
+            covis,
+            iso,
+            hit_mask,
+            out_edge_ids,
+            out_gaus_ids,
             global_counter,
             max_capacity
         );
