@@ -2,7 +2,11 @@ import torch
 from typing import Tuple, Optional
 
 # Explicitly import the compiled CMake target
-from .._C import compute_aabb_wrapper, query_gs_voxel_intersection_brute_force_wrapper
+from .._C import (
+    compute_aabb_wrapper, 
+    query_gs_voxel_intersection_brute_force_wrapper,
+    query_gs_edge_intersection_brute_force_wrapper
+)
 
 def compute_gaussian_aabb(
     means: torch.Tensor,
@@ -117,3 +121,44 @@ def query_gs_voxel_intersection(
     )
 
     return hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities
+
+def query_gs_edge_intersection(
+    edge_starts: torch.Tensor,
+    edge_ends: torch.Tensor,
+    means: torch.Tensor,
+    covis: torch.Tensor,
+    iso: float = 11.345,
+    max_capacity: int = 10000000
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Queries intersections between Gaussians and edges using a brute-force approach.
+
+    Args:
+        edge_starts (torch.Tensor): (E, 3) tensor of edge start points.
+        edge_ends (torch.Tensor): (E, 3) tensor of edge end points.
+        means (torch.Tensor): (N, 3) tensor of Gaussian center positions.
+        covis (torch.Tensor): (N, 6) tensor of covariance inverses.
+        iso (float, optional): The opacity cutoff threshold. Defaults to 11.345.
+        max_capacity (int, optional): Maximum number of intersections to store. Defaults to 10000000.
+
+    Returns:
+        hit_mask: torch.Tensor: (E,) boolean mask of edges that experienced at least one hit.
+        out_edge_ids: torch.Tensor: (K,) tensor of edge IDs with intersections.
+        out_gaus_ids: torch.Tensor: (K,) tensor of Gaussian IDs with intersections.
+    """
+
+    # Safety Boundary: Ensure memory is perfectly aligned before hitting C++
+    if not all(t.is_cuda for t in [edge_starts, edge_ends, means, covis]):
+        raise ValueError("All input tensors must be CUDA tensors.")
+
+    # Contiguous casting ensures memory layout matches C++ pointer expectations
+    hit_mask, out_edge_ids, out_gaus_ids = query_gs_edge_intersection_brute_force_wrapper(
+        edge_starts.contiguous().to(torch.float32),
+        edge_ends.contiguous().to(torch.float32),
+        means.contiguous().to(torch.float32),
+        covis.contiguous().to(torch.float32),
+        iso,
+        max_capacity
+    )
+
+    return hit_mask, out_edge_ids, out_gaus_ids
