@@ -4,7 +4,8 @@ from typing import Tuple, Optional
 # Explicitly import the compiled CMake target
 from .._C import (
     compute_aabb_wrapper, 
-    query_gs_voxel_intersection_brute_force_wrapper,
+    query_gs_voxel_pair_intersection_brute_force_wrapper,
+    query_gs_edge_pair_intersection_brute_force_wrapper,
     query_gs_edge_intersection_brute_force_wrapper
 )
 
@@ -38,8 +39,8 @@ def compute_gaussian_aabb(
     """
     
     # Safety Boundary: Ensure memory is perfectly aligned before hitting C++
-    if not means.is_cuda:
-        raise ValueError("Inputs must be CUDA tensors.")
+    if not all(t.is_cuda for t in [means, rotations, scales]):
+        raise ValueError("All input tensors must be CUDA tensors.")
         
     means_c = means.contiguous().to(torch.float32)
     rotations_c = rotations.contiguous().to(torch.float32)
@@ -58,7 +59,7 @@ def compute_gaussian_aabb(
 
     return aabb_min, aabb_max, contact_points, covi
 
-def query_gs_voxel_intersection(
+def query_gs_voxel_pair_intersection(
     vx_aabb_mins: torch.Tensor,
     vx_aabb_maxs: torch.Tensor,
     means: torch.Tensor,
@@ -104,7 +105,7 @@ def query_gs_voxel_intersection(
         raise ValueError("All input tensors must be CUDA tensors.")
 
     # Contiguous casting ensures memory layout matches C++ pointer expectations
-    hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities = query_gs_voxel_intersection_brute_force_wrapper(
+    hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities = query_gs_voxel_pair_intersection_brute_force_wrapper(
         vx_aabb_mins.contiguous().to(torch.float32),
         vx_aabb_maxs.contiguous().to(torch.float32),
         means.contiguous().to(torch.float32),
@@ -122,7 +123,7 @@ def query_gs_voxel_intersection(
 
     return hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities
 
-def query_gs_edge_intersection(
+def query_gs_edge_pair_intersection(
     edge_starts: torch.Tensor,
     edge_ends: torch.Tensor,
     means: torch.Tensor,
@@ -152,7 +153,7 @@ def query_gs_edge_intersection(
         raise ValueError("All input tensors must be CUDA tensors.")
 
     # Contiguous casting ensures memory layout matches C++ pointer expectations
-    hit_mask, out_edge_ids, out_gaus_ids = query_gs_edge_intersection_brute_force_wrapper(
+    hit_mask, out_edge_ids, out_gaus_ids = query_gs_edge_pair_intersection_brute_force_wrapper(
         edge_starts.contiguous().to(torch.float32),
         edge_ends.contiguous().to(torch.float32),
         means.contiguous().to(torch.float32),
@@ -162,3 +163,38 @@ def query_gs_edge_intersection(
     )
 
     return hit_mask, out_edge_ids, out_gaus_ids
+
+def query_gs_edge_intersection(
+    edge_starts: torch.Tensor,
+    edge_ends: torch.Tensor,
+    means: torch.Tensor,
+    covis: torch.Tensor,
+    iso: float = 11.345
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Queries intersections. For each edge, returns the ID of the Gaussian 
+    that had the thickest volume overlap.
+    
+    Args:
+        edge_starts (torch.Tensor): (E, 3) tensor of edge start points.
+        edge_ends (torch.Tensor): (E, 3) tensor of edge end points.
+        means (torch.Tensor): (N, 3) tensor of Gaussian center positions.
+        covis (torch.Tensor): (N, 6) tensor of covariance inverses.
+        iso (float, optional): The opacity cutoff threshold. Defaults to 11.345.
+    
+    Returns:
+        hit_mask: (E,) boolean mask of edges that hit at least one Gaussian.
+        out_gaus_ids: (E,) tensor of the 'best' Gaussian IDs (-1 if no hit).
+    """
+    if not all(t.is_cuda for t in [edge_starts, edge_ends, means, covis]):
+        raise ValueError("All input tensors must be CUDA tensors.")
+
+    hit_mask, out_gaus_ids = query_gs_edge_intersection_brute_force_wrapper(
+        edge_starts.contiguous().to(torch.float32),
+        edge_ends.contiguous().to(torch.float32),
+        means.contiguous().to(torch.float32),
+        covis.contiguous().to(torch.float32),
+        iso
+    )
+
+    return hit_mask, out_gaus_ids
