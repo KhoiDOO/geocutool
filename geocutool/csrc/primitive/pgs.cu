@@ -102,6 +102,7 @@ namespace pgs_aabb
         const float iso,
         const float3 &vx_ab_min,
         const float3 &vx_ab_max,
+        const bool return_centroids,
         float3 &out_centroid)
     {
         float vsize = vx_ab_max.x - vx_ab_min.x; 
@@ -119,9 +120,11 @@ namespace pgs_aabb
             float3 start_x = make_float3(p.x, p.y + (i / 2 ? vsize : 0.0f), p.z + (i % 2 ? vsize : 0.0f));
             float3 end_x   = make_float3(p.x + vsize, start_x.y, start_x.z);
             if (pgs::test_pgs_segment(mean, normal, covi, iso, start_x, end_x, t_hit)) {
-                sum_points.x += start_x.x + (t_hit * vsize);
-                sum_points.y += start_x.y;
-                sum_points.z += start_x.z;
+                if (return_centroids) {
+                    sum_points.x += start_x.x + (t_hit * vsize);
+                    sum_points.y += start_x.y;
+                    sum_points.z += start_x.z;
+                }
                 total_hits++;
             }
 
@@ -129,9 +132,11 @@ namespace pgs_aabb
             float3 start_y = make_float3(p.x + (i / 2 ? vsize : 0.0f), p.y, p.z + (i % 2 ? vsize : 0.0f));
             float3 end_y   = make_float3(start_y.x, p.y + vsize, start_y.z);
             if (pgs::test_pgs_segment(mean, normal, covi, iso, start_y, end_y, t_hit)) {
-                sum_points.x += start_y.x;
-                sum_points.y += start_y.y + (t_hit * vsize);
-                sum_points.z += start_y.z;
+                if (return_centroids) {
+                    sum_points.x += start_y.x;
+                    sum_points.y += start_y.y + (t_hit * vsize);
+                    sum_points.z += start_y.z;
+                }
                 total_hits++;
             }
 
@@ -139,20 +144,24 @@ namespace pgs_aabb
             float3 start_z = make_float3(p.x + (i / 2 ? vsize : 0.0f), p.y + (i % 2 ? vsize : 0.0f), p.z);
             float3 end_z   = make_float3(start_z.x, start_z.y, p.z + vsize);
             if (pgs::test_pgs_segment(mean, normal, covi, iso, start_z, end_z, t_hit)) {
-                sum_points.x += start_z.x;
-                sum_points.y += start_z.y;
-                sum_points.z += start_z.z + (t_hit * vsize);
+                if (return_centroids) {
+                    sum_points.x += start_z.x;
+                    sum_points.y += start_z.y;
+                    sum_points.z += start_z.z + (t_hit * vsize);
+                }
                 total_hits++;
             }
         }
 
         if (total_hits > 0) {
             // Average the accumulated surface points
-            out_centroid = make_float3(
-                sum_points.x / total_hits,
-                sum_points.y / total_hits,
-                sum_points.z / total_hits
-            );
+            if (return_centroids) {
+                out_centroid = make_float3(
+                    sum_points.x / total_hits,
+                    sum_points.y / total_hits,
+                    sum_points.z / total_hits
+                );
+            }
             return true; 
         }
         
@@ -171,10 +180,12 @@ namespace pgs_aabb
         const float3 *__restrict__ gs_aabb_maxs,
         const float iso,
         const bool return_centroids,
+        const bool return_centroid_densities,
         bool *__restrict__ hit_mask,
         int64_t *__restrict__ out_voxel_ids,
         int64_t *__restrict__ out_gaus_ids,
         float3 *__restrict__ centroids,
+        float *__restrict__ densities,
         int64_t *__restrict__ global_counter,
         const int64_t max_capacity)
     {
@@ -203,7 +214,7 @@ namespace pgs_aabb
                 
                 // 2. NARROW PHASE & CENTROID CALCULATION (12-Edge Check + Iso)
                 bool narrow_hit = compute_pgs_voxel_centroid(
-                    mean, normal, covi, iso, vx_ab_min, vx_ab_max, centroid);
+                    mean, normal, covi, iso, vx_ab_min, vx_ab_max, return_centroids, centroid);
 
                 if (narrow_hit)
                 {
@@ -218,6 +229,13 @@ namespace pgs_aabb
                         if (return_centroids)
                         {
                             centroids[write_idx] = centroid;
+
+                            if (return_centroid_densities)
+                            {
+                                float density;
+                                gs::compute_density(centroid, mean, covi, 1.0f, density);
+                                densities[write_idx] = density;
+                            }
                         }
                     }
                 }
@@ -239,10 +257,12 @@ namespace pgs_aabb
         const float3 *__restrict__ gs_aabb_maxs,
         const float iso,
         const bool return_centroids,
+        const bool return_centroid_densities,
         bool *__restrict__ hit_mask,
         int64_t *__restrict__ out_voxel_ids,
         int64_t *__restrict__ out_gaus_ids,
         float3 *__restrict__ centroids,
+        float *__restrict__ densities,
         int64_t *__restrict__ global_counter,
         const int64_t max_capacity)
     {
@@ -261,10 +281,12 @@ namespace pgs_aabb
             gs_aabb_maxs,
             iso, 
             return_centroids, 
+            return_centroid_densities,
             hit_mask, 
             out_voxel_ids, 
             out_gaus_ids, 
             centroids, 
+            densities,
             global_counter, 
             max_capacity);
     }

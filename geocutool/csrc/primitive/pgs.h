@@ -18,10 +18,12 @@ namespace pgs_aabb
         const float3 *__restrict__ gs_aabb_maxs,
         const float iso,
         const bool return_centroids,
+        const bool return_centroid_densities,
         bool *__restrict__ hit_mask,
         int64_t *__restrict__ out_voxel_ids,
         int64_t *__restrict__ out_gaus_ids,
         float3 *__restrict__ centroids,
+        float *__restrict__ densities,
         int64_t *__restrict__ global_counter,
         const int64_t max_capacity);
     
