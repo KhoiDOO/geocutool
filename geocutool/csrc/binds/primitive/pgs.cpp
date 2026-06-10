@@ -11,7 +11,7 @@
 
 namespace py = pybind11;
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> query_pgs_voxel_pair_intersection_brute_force_wrapper(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>> query_pgs_voxel_pair_intersection_brute_force_wrapper(
     const torch::Tensor &vx_aabb_mins,
     const torch::Tensor &vx_aabb_maxs,
     const torch::Tensor &means,
@@ -21,6 +21,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
     const torch::Tensor &gs_aabb_maxs,
     const float iso,
     const bool return_centroids,
+    const bool return_centroid_densities,
     const int64_t max_capacity)
 {
     // 1. Enforce memory contiguity and CUDA residency
@@ -61,12 +62,18 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
     torch::Tensor global_counter = torch::zeros({1}, options.dtype(torch::kInt64));
     
     torch::Tensor centroids;
+    torch::Tensor densities;
     float3* centroids_ptr = nullptr;
+    float* densities_ptr = nullptr;
     
     if (return_centroids) {
         // Only allocate the [max_capacity, 3] float tensor if requested
         centroids = torch::empty({max_capacity, 3}, options.dtype(torch::kFloat32));
         centroids_ptr = reinterpret_cast<float3*>(centroids.data_ptr<float>());
+        if (return_centroid_densities) {
+            densities = torch::empty({max_capacity}, options.dtype(torch::kFloat32));
+            densities_ptr = densities.data_ptr<float>();
+        }
     }
     
     // 5. Launch the CUDA Kernel
@@ -82,10 +89,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
         reinterpret_cast<const float3 *>(gs_aabb_maxs.data_ptr<float>()),
         iso,
         return_centroids,
+        return_centroid_densities,
         reinterpret_cast<bool *>(hit_mask.data_ptr<bool>()),
         reinterpret_cast<int64_t *>(out_voxel_ids.data_ptr<int64_t>()),
         reinterpret_cast<int64_t *>(out_gaus_ids.data_ptr<int64_t>()),
         centroids_ptr,
+        densities_ptr,
         reinterpret_cast<int64_t *>(global_counter.data_ptr<int64_t>()),
         max_capacity);
 
@@ -95,12 +104,21 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
         TORCH_WARN("Exceeded max capacity! Found ", num_intersections, " hits but capacity was ", max_capacity);
     }
     int64_t valid_hits = std::min(num_intersections, max_capacity);
-    if (return_centroids) {
+    if (return_centroids && return_centroid_densities) {
         return std::make_tuple(
             hit_mask,
             out_voxel_ids.slice(0, 0, valid_hits), 
             out_gaus_ids.slice(0, 0, valid_hits),
-            centroids.slice(0, 0, valid_hits)
+            centroids.slice(0, 0, valid_hits),
+            densities.slice(0, 0, valid_hits)
+        );
+    } else if (return_centroids) {
+        return std::make_tuple(
+            hit_mask,
+            out_voxel_ids.slice(0, 0, valid_hits), 
+            out_gaus_ids.slice(0, 0, valid_hits),
+            centroids.slice(0, 0, valid_hits),
+            std::nullopt
         );
     } else {
         // Return std::nullopt for the optional tensor
@@ -108,6 +126,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Ten
             hit_mask,
             out_voxel_ids.slice(0, 0, valid_hits), 
             out_gaus_ids.slice(0, 0, valid_hits),
+            std::nullopt,
             std::nullopt
         );
     }
@@ -183,6 +202,7 @@ void bind_primitive_pgs(py::module_ &m)
         py::arg("gs_aabb_maxs"),
         py::arg("iso"),
         py::arg("return_centroids") = false,
+        py::arg("return_centroid_densities") = false,
         py::arg("max_capacity") = 1000000
     );
 
