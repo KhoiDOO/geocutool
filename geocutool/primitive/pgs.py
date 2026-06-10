@@ -16,8 +16,9 @@ def query_pgs_voxel_pair_intersection(
     gs_aabb_maxs: torch.Tensor,
     iso: float = 11.345,
     return_centroids: bool = False,
+    return_centroid_densities: bool = False,
     max_capacity: int = 10000000
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """
     Queries intersections between Gaussians and voxels using a brute-force approach.
 
@@ -38,6 +39,7 @@ def query_pgs_voxel_pair_intersection(
         out_voxel_ids: torch.Tensor: (K,) tensor of voxel IDs with intersections.
         out_gaus_ids: torch.Tensor: (K,) tensor of Gaussian IDs with intersections.
         centroids: torch.Tensor or None: (K, 3) tensor of centroids of the intersections, if requested.
+        densities: torch.Tensor or None: (K,) tensor of densities of the intersections, if requested.
     """
     
     # Safety Boundary: Ensure memory is perfectly aligned before hitting C++
@@ -47,7 +49,7 @@ def query_pgs_voxel_pair_intersection(
         raise ValueError("All input tensors must be CUDA tensors.")
 
     # Contiguous casting ensures memory layout matches C++ pointer expectations
-    hit_mask, out_voxel_ids, out_gaus_ids, centroids = query_pgs_voxel_pair_intersection_brute_force(
+    hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities = query_pgs_voxel_pair_intersection_brute_force(
         vx_aabb_mins.contiguous().to(torch.float32),
         vx_aabb_maxs.contiguous().to(torch.float32),
         means.contiguous().to(torch.float32),
@@ -57,10 +59,11 @@ def query_pgs_voxel_pair_intersection(
         gs_aabb_maxs.contiguous().to(torch.float32),
         iso,
         return_centroids,
+        return_centroid_densities,
         max_capacity
     )
 
-    return hit_mask, out_voxel_ids, out_gaus_ids, centroids
+    return hit_mask, out_voxel_ids, out_gaus_ids, centroids, densities
 
 def query_pgs_edge_intersection(
     edge_starts: torch.Tensor,
