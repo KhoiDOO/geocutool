@@ -82,10 +82,6 @@ static __inline__ __host__ __device__  float3 crs3(float3 a, float3 b) {
     );
 }
 
-static __inline__ __host__ __device__ float make_float(float a) {
-    return a;
-}
-
 static __inline__ __host__ __device__ float3x3 make_float3x3(
     float a00, float a01, float a02,
     float a10, float a11, float a12,

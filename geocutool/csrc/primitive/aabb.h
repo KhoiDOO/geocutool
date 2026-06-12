@@ -1,7 +1,7 @@
 #ifndef AABB_H
 #define AABB_H
 
-#include "base.h"
+#include "../base.h"
 
 #include <cuda_runtime.h>
 

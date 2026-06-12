@@ -1,5 +1,5 @@
 #pragma once
-#include "base.h"
+#include "../base.h"
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
