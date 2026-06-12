@@ -75,6 +75,12 @@ def get_extensions():
 
     sources = [s for s in sources]
     include_dirs = [os.path.join("geocutool", "csrc")]
+    
+    # Ensure torch libraries are in the RPATH
+    torch_lib_path = os.path.join(os.path.dirname(torch.__file__), "lib")
+    library_dirs = [torch_lib_path]
+    runtime_library_dirs = [torch_lib_path]
+
     print("sources:", sources)
     print("include_dirs:", include_dirs)
 
@@ -83,6 +89,8 @@ def get_extensions():
             "geocutool._C",
             sources,
             include_dirs=include_dirs,
+            library_dirs=library_dirs,
+            runtime_library_dirs=runtime_library_dirs,
             define_macros=define_macros,
             extra_compile_args=extra_compile_args,
         )
