@@ -155,7 +155,10 @@ def check_links(out_dir: Path) -> List[str]:
         for href in _HREF.findall(text):
             if href.startswith(("http://", "https://", "mailto:", "data:", "//")):
                 continue
-            target = (page.parent / href.split("#")[0]).resolve()
+            # Assets carry a ?v=<hash> cache buster; strip it before
+            # resolving, or every stylesheet link reads as dead.
+            path = href.split("#")[0].split("?")[0]
+            target = (page.parent / path).resolve()
             if not target.exists():
                 problems.append(f"{page.relative_to(out_dir)} -> {href}")
     return problems
