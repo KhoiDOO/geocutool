@@ -23,6 +23,17 @@
 namespace mca {
 
 // Helper to evaluate oriented segments on a cube face with Asymptotic Decider
+/**
+ * @brief Resolves one cube face's connectivity with the asymptotic decider.
+ * @details Evaluates the bilinear saddle value on the face and links its bipolar edges
+ * accordingly, recording the result as a successor map. Both cells sharing the face compute
+ * the same saddle from the same corner values, so they always agree -- which is exactly why
+ * the decider eliminates the cracks plain Marching Cubes leaves on ambiguous faces.
+ * @param[in] f Face index, in the ::v_face and ::e_face ordering.
+ * @param[in] F The cell's eight corner values.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in,out] next_e Successor map over the 12 local edges, filled for this face.
+ */
 __device__ __forceinline__ void evaluate_face_segments(
     int f,
     const float F[8],
@@ -124,6 +135,19 @@ __device__ __forceinline__ void evaluate_face_segments(
 }
 
 // Compute closed polygon loops and count total triangles
+/**
+ * @brief Traces a cell's surface contours by following the resolved edge successors.
+ * @details Runs the decider over all six faces to build a successor map, then walks it to
+ * recover closed loops of edges. Each loop is one connected surface component within the
+ * cell, and triangulating the loops rather than reading a fixed table is what lets the
+ * method emit topologically correct geometry for ambiguous cases.
+ * @param[in] F The cell's eight corner values.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[out] out_loops Local edge indices of each traced loop.
+ * @param[out] out_loop_lens Length of each loop.
+ * @return Number of loops found.
+ * @note At most four loops fit in a cell, which bounds the output arrays.
+ */
 __device__ __forceinline__ int trace_mca_loops(
     const float F[8],
     float iso,
@@ -166,6 +190,20 @@ __device__ __forceinline__ int trace_mca_loops(
     return total_triangles;
 }
 
+/**
+ * @brief Counts the triangles each voxel emits, resolving ambiguous faces on the fly.
+ * @details Sizing pass. One thread per voxel. Unambiguous cases read their triangle count
+ * straight from the Marching Cubes tables; cases flagged by ::cubeFaceAmbigMask evaluate
+ * the bilinear saddle on each ambiguous face and pick the connection its sign implies.
+ * Because both cells sharing a face compute the same saddle value, neighbours always agree
+ * and the surface cannot crack -- the defect plain Marching Cubes exhibits on these cases.
+ * @param[in] num_voxels Number of voxels.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[out] triangle_counts Device array of per-voxel triangle counts.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void compute_active_voxels_mca_kernel(
     const uint32_t num_voxels,
     const uint32_t *__restrict__ voxels,
@@ -213,6 +251,24 @@ __global__ void compute_active_voxels_mca_kernel(
     }
 }
 
+/**
+ * @brief Emits triangles and their bipolar edge keys at precomputed offsets.
+ * @details One thread per voxel, repeating the decider decisions from the counting pass so
+ * both agree exactly. Triangles are written as edge keys rather than vertex indices, to be
+ * remapped once the keys have been deduplicated; writes go to prefix-summed offsets and so
+ * need no atomics.
+ * @param[in] num_voxels Number of voxels.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] tri_offsets Device array of per-voxel triangle write offsets.
+ * @param[out] out_edges Device array of 64-bit edge keys, three per triangle.
+ * @param[out] out_triangles Device array of triangles, initially indexed by edge instance.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The decider must reach the same conclusion as the counting pass. Any divergence
+ * between the two -- for instance from a differently rounded saddle evaluation -- would
+ * overrun the allotted output range.
+ */
 __global__ void generate_edges_and_triangles_mca_kernel(
     const uint32_t num_voxels,
     const uint32_t *__restrict__ voxels,
@@ -304,6 +360,17 @@ __global__ void generate_edges_and_triangles_mca_kernel(
     }
 }
 
+/**
+ * @brief Rewrites triangle indices from edge instances to deduplicated vertices.
+ * @details One thread per triangle, substituting each of its three edge-instance slots for
+ * the unique vertex index found by the host's sort-and-unique pass. This is the step that
+ * welds the mesh: triangles from neighbouring voxels come to share vertices instead of
+ * duplicating them.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] edge_indices Device array mapping edge instances to unique vertex indices.
+ * @param[in,out] triangles Device array of triangles, remapped in place.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void remap_triangles_kernel(
     const uint32_t num_triangles,
     const uint32_t *__restrict__ edge_indices,
@@ -319,6 +386,22 @@ __global__ void remap_triangles_kernel(
     );
 }
 
+/**
+ * @brief Places one output vertex on each unique bipolar edge.
+ * @details One thread per unique edge. The 64-bit key is unpacked into its two grid vertex
+ * indices and the crossing is interpolated linearly, with colours following the same
+ * parameter. Each edge is visited once, so no atomics are needed.
+ * @param[in] num_edges Number of unique edges.
+ * @param[in] unique_edge_keys Device array of deduplicated 64-bit edge keys.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] in_colors Device array of per-grid-vertex colours, or `nullptr`.
+ * @param[in] num_color_channels Colour channels per vertex.
+ * @param[in] iso Isolevel being extracted.
+ * @param[out] out_vertices Device array of interpolated surface vertices.
+ * @param[out] out_colors Device array of interpolated colours.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void interpolate_vertices_and_features_kernel(
     const uint32_t num_edges,
     const uint64_t *__restrict__ unique_edge_keys,
@@ -356,6 +439,26 @@ __global__ void interpolate_vertices_and_features_kernel(
     }
 }
 
+/**
+ * @brief Backpropagates vertex gradients into the scalar field and colours.
+ * @details The analytical adjoint of the interpolation pass. One thread per unique edge,
+ * applying the closed-form derivatives of $t = (\text{iso} - f_0) / (f_1 - f_0)$ with
+ * respect to both corner values.
+ * @param[in] num_edges Number of unique edges.
+ * @param[in] unique_edge_keys Device array of deduplicated 64-bit edge keys.
+ * @param[in] grad_vertices Device array of incoming vertex position gradients.
+ * @param[in] grad_colors Device array of incoming colour gradients, or `nullptr`.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] in_colors Device array of per-grid-vertex colours, or `nullptr`.
+ * @param[in] num_color_channels Colour channels per vertex.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] iso Isolevel used in the forward pass.
+ * @param[out] grad_sdf Device array accumulating scalar field gradients.
+ * @param[out] grad_in_colors Device array accumulating colour gradients.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Accumulation into shared grid vertices uses `atomicAdd`, so the reduction order
+ * varies between runs.
+ */
 __global__ void backward_dmca_kernel(
     const uint32_t num_edges,
     const uint64_t *__restrict__ unique_edge_keys,

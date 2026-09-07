@@ -7,6 +7,42 @@
 #include <stdio.h>
 #include <math.h>
 
+/**
+ * @brief Integrates one RGB-D frame into a truncated signed distance volume.
+ * @details One thread per grid vertex. Each transforms its world position into camera
+ * space, projects it through the intrinsics, samples the depth map at the nearest pixel,
+ * and folds the resulting signed distance into a running weighted average
+ * $\text{tsdf} \leftarrow (\text{tsdf} \cdot w + d) / (w + 1)$. Colour, when supplied,
+ * is averaged with the same weights.
+ *
+ * Two distance conventions are available. `mode == 1` scales the depth residual by
+ * $\|\mathbf{p}_{cam}\| / z_c$ to give a true Euclidean distance along the viewing ray
+ * (matching Open3D's `UniformTSDFVolume`); any other value keeps the cheaper projective
+ * residual $d - z_c$, which is accurate near the optical axis and increasingly
+ * approximate towards the image corners.
+ *
+ * @param[in] num_vertices Number of grid vertices $N$.
+ * @param[in] grid_vertices Device array of $N$ world-space vertex coordinates.
+ * @param[in,out] sdf Device array of $N$ truncated signed distances, updated in place.
+ * @param[in,out] weight Device array of $N$ accumulated observation counts.
+ * @param[in,out] color Device array of $N$ RGB values, or `nullptr` to skip colour.
+ * @param[in] depth_image Row-major depth buffer of `image_width * image_height` samples.
+ * @param[in] color_image Row-major RGB buffer, or `nullptr`.
+ * @param[in] image_width Depth and colour image width in pixels.
+ * @param[in] image_height Depth and colour image height in pixels.
+ * @param[in] extrinsics World-to-camera transform.
+ * @param[in] intrinsics Camera projection matrix.
+ * @param[in] trunc_margin Truncation band half-width; distances are normalised by it and
+ *     clamped to 1.
+ * @param[in] mode Distance convention: 1 for Euclidean, otherwise projective.
+ * @note Launched with 256 threads per block over a 1D grid.
+ * @note Vertices behind the camera ($z_c \le 0$), projecting outside the image, landing on
+ * invalid depth ($d \le 0$), or falling behind the truncation band are skipped, leaving
+ * their state untouched.
+ * @warning Each vertex is written by exactly one thread, so no atomics are needed --
+ * but this also means integrating several frames concurrently into one volume would
+ * race. Call once per frame.
+ */
 __global__ void single_view_volume_integral_kernel(
     const int num_vertices,
     const float3* grid_vertices,

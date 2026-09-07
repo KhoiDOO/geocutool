@@ -13,6 +13,19 @@
 
 namespace ops {
 
+    /**
+     * @brief Compare-and-swap on a single byte, emulated with 32-bit atomics.
+     * @details CUDA provides no 8-bit `atomicCAS`, so this reads the containing aligned word,
+     * splices the byte, and retries until the word-wide CAS succeeds. Storing occupancy labels
+     * as bytes rather than words cuts the mask's footprint fourfold, which is what keeps a
+     * $1024^3$ grid resident.
+     * @param[in,out] address Byte to update; may be unaligned.
+     * @param[in] compare Expected current value.
+     * @param[in] val Replacement value.
+     * @return The value found at @p address before the attempt.
+     * @warning Contention is per 32-bit word, not per byte: four threads updating adjacent
+     * bytes serialise against each other even though their targets are disjoint.
+     */
     __device__ int8_t atomicCAS_int8(int8_t* address, int8_t compare, int8_t val) {
         int32_t* address_as_int = (int32_t*)((uintptr_t)address & ~3);
         int shift = (((uintptr_t)address & 3) * 8);
@@ -30,6 +43,24 @@ namespace ops {
         return (int8_t)((old >> shift) & 0xff);
     }
 
+    /**
+     * @brief Tests whether a segment intersects any mesh triangle.
+     * @details Traverses the BVH with the segment's own bounding box and applies the exact
+     * Moller-Trumbore test to surviving leaves, returning at the first hit. Testing the whole
+     * segment rather than its endpoints is what stops the flood fill tunnelling through a wall
+     * thinner than the voxel spacing.
+     * @param[in] p0 Segment start.
+     * @param[in] p1 Segment end.
+     * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+     * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+     * @param[in] bvh_children Device array of BVH child index pairs.
+     * @param[in] object_ids Device array mapping leaves to triangle indices.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @return True if the segment meets any triangle.
+     * @note Degenerate segments shorter than 1e-8 return false.
+     * @warning Uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory.
+     */
     __device__ __forceinline__ bool test_segment_intersect_bvh(
         const float3& p0, const float3& p1,
         const float3* __restrict__ bvh_aabb_mins,
@@ -107,7 +138,26 @@ namespace ops {
         return false;
     }
 
-    __global__ void init_perimeter_kernel(
+/**
+ * @brief Seeds the flood fill from the grid's outer boundary.
+ * @details Every vertex on the domain's six faces is definitionally outside the geometry,
+ * so the fill starts there and works inwards. One thread per grid vertex; boundary
+ * vertices still marked unknown ($-2$) are relabelled as exterior ($2$) and appended to
+ * the initial frontier through an atomic bump of the shared counter.
+ *
+ * @param[in,out] mask Device array of $R_X R_Y R_Z$ occupancy labels, updated in place.
+ * @param[out] frontier Device array receiving the seeded vertex indices.
+ * @param[in,out] frontier_size Device counter, atomically incremented per seed.
+ * @param[in] RX Grid resolution along $x$.
+ * @param[in] RY Grid resolution along $y$.
+ * @param[in] RZ Grid resolution along $z$.
+ * @note Launched with one thread per vertex over a 1D grid; indices are computed in
+ * `int64_t` because a $1024^3$ grid overflows 32-bit addressing.
+ * @warning Assumes the grid bounds enclose the geometry with at least one vertex of
+ * padding. Without it, surface vertices sit on the boundary, get seeded as exterior, and
+ * the fill leaks into the interior.
+ */
+__global__ void init_perimeter_kernel(
         int8_t* __restrict__ mask,
         int* __restrict__ frontier,
         int* __restrict__ frontier_size,
@@ -133,7 +183,44 @@ namespace ops {
         }
     }
 
-    __global__ void flood_fill_step_kernel(
+/**
+ * @brief Expands the flood-fill frontier by one layer, stopping at the surface.
+ * @details One thread per frontier vertex. Each examines its 6- or 26-connected
+ * neighbours and, for every unvisited one, tests whether the connecting segment
+ * intersects the mesh by traversing the BVH. Unobstructed neighbours inherit the exterior
+ * label and join the next frontier; blocked ones are left for the interior pass. Testing
+ * the segment rather than the endpoint is what keeps the fill from tunnelling through
+ * thin walls between adjacent samples.
+ *
+ * The host relaunches this kernel until the frontier empties, so the number of launches
+ * is the exterior region's graph diameter rather than a fixed count.
+ *
+ * @param[in,out] mask Device array of occupancy labels, updated in place.
+ * @param[in] current_frontier Device array of vertex indices to expand.
+ * @param[in] frontier_size Number of entries in @p current_frontier.
+ * @param[out] next_frontier Device array receiving the following layer.
+ * @param[in,out] next_frontier_size Device counter, atomically incremented per insertion.
+ * @param[in] RX Grid resolution along $x$.
+ * @param[in] RY Grid resolution along $y$.
+ * @param[in] RZ Grid resolution along $z$.
+ * @param[in] connectivity Neighbourhood size, 6 or 26.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] grid_spacing Per-axis distance between adjacent vertices.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping BVH leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of mesh triangle vertex indices.
+ * @param[in] num_objects Number of triangles in the mesh.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid sized to the frontier.
+ * @warning Load is highly irregular: a thread whose neighbours are all visited exits at
+ * once, while one near the surface performs up to 26 BVH traversals. Warp divergence here
+ * is intrinsic to the algorithm.
+ * @warning Several threads may reach the same neighbour in one step. The label write is
+ * idempotent, but the frontier counter must stay atomic or entries would be lost.
+ */
+__global__ void flood_fill_step_kernel(
         int8_t* __restrict__ mask,
         const int* __restrict__ current_frontier,
         int frontier_size,

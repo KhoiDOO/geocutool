@@ -19,15 +19,15 @@ namespace ops {
      * @brief Result container for Coarse-to-Fine Volumetric Flood Fill.
      */
     struct CFFloodFillResult {
-        torch::Tensor coarse_mask;            // (Cx, Cy, Cz) int8 tensor (2: water/exterior, -1: interior, 1: boundary)
-        torch::Tensor boundary_block_coords;  // (N_boundary, 3) int32
-        torch::Tensor boundary_block_lookup;  // (Cx, Cy, Cz) int32 dense lookup index (-1 if not boundary, else block index in fine_boundary_masks)
-        torch::Tensor fine_boundary_masks;    // (N_boundary, Bx, By, Bz) int8 local masks
-        std::vector<int64_t> block_size;      // [Bx, By, Bz]
-        std::vector<int64_t> coarse_res;      // [Cx, Cy, Cz]
-        std::vector<float> grid_min;
-        std::vector<float> grid_max;
-        std::vector<int64_t> grid_res;
+        torch::Tensor coarse_mask; ///< (Cx, Cy, Cz) int8 labels: 2 exterior, -1 interior, 1 surface-crossing.
+        torch::Tensor boundary_block_coords; ///< (N, 3) int32 coarse coordinates of the surface-crossing blocks.
+        torch::Tensor boundary_block_lookup; ///< (Cx, Cy, Cz) int32 index into the boundary arrays, -1 when not a boundary block.
+        torch::Tensor fine_boundary_masks; ///< (N, Bx, By, Bz) int8 per-voxel labels inside each surface-crossing block.
+        std::vector<int64_t> block_size; ///< Fine voxels per coarse block, [Bx, By, Bz].
+        std::vector<int64_t> coarse_res; ///< Coarse grid resolution, [Cx, Cy, Cz].
+        std::vector<float> grid_min; ///< World coordinate of the grid's lower corner.
+        std::vector<float> grid_max; ///< World coordinate of the grid's upper corner.
+        std::vector<int64_t> grid_res; ///< Fine grid resolution.
     };
 
     /**

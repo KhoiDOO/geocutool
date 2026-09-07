@@ -27,6 +27,17 @@ namespace ops {
 namespace {
 
 // Evaluate trilinear scalar value inside cell at (u, v, w) in [0, 1]^3
+/**
+ * @brief Trilinear interpolation of the eight corner values of a cell.
+ * @details Evaluates the standard trilinear form. This is the exact field Dual Marching
+ * Cubes projects its vertices onto, so extracted geometry agrees with the interpolant the
+ * topology tables assume.
+ * @param[in] u Local coordinate along $x$, in $[0, 1]$.
+ * @param[in] v Local coordinate along $y$, in $[0, 1]$.
+ * @param[in] w Local coordinate along $z$, in $[0, 1]$.
+ * @param[in] s The cell's eight corner values.
+ * @return The interpolated field value.
+ */
 __device__ __forceinline__ float trilinear_val(
     float u, float v, float w,
     const float s[8]
@@ -43,6 +54,19 @@ __device__ __forceinline__ float trilinear_val(
 }
 
 // Evaluate trilinear gradient (du, dv, dw)
+/**
+ * @brief Gradient of the trilinear field inside a unit cell.
+ * @details Differentiates the trilinear interpolant analytically and divides by the cell
+ * spacing to return a world-space gradient. The direction is the surface normal wherever
+ * the field is a signed distance.
+ * @param[in] u Local coordinate along $x$, in $[0, 1]$.
+ * @param[in] v Local coordinate along $y$, in $[0, 1]$.
+ * @param[in] w Local coordinate along $z$, in $[0, 1]$.
+ * @param[in] s The cell's eight corner values.
+ * @return The field gradient.
+ * @note Paired with trilinear_val() to drive the Newton-Raphson projection of dual
+ * vertices onto the level set.
+ */
 __device__ __forceinline__ float3 trilinear_grad(
     float u, float v, float w,
     const float s[8]
@@ -60,6 +84,16 @@ __device__ __forceinline__ float3 trilinear_grad(
 }
 
 // Compute minimum angle of a 3D triangle in radians
+/**
+ * @brief Smallest interior angle of a triangle.
+ * @details Used to choose between the two possible diagonals when splitting a quad: the
+ * split with the larger minimum angle produces better-conditioned triangles and avoids
+ * slivers.
+ * @param[in] p0 First vertex.
+ * @param[in] p1 Second vertex.
+ * @param[in] p2 Third vertex.
+ * @return The smallest interior angle in radians.
+ */
 __device__ __forceinline__ float triangle_min_angle(
     const float3 &p0, const float3 &p1, const float3 &p2
 ) {
@@ -89,6 +123,21 @@ __device__ __forceinline__ float triangle_min_angle(
 }
 
 // Extract independent MC polygon contours for a single voxel cell
+/**
+ * @brief Decomposes a cell into its independent surface contours.
+ * @details Reads the packed ::dmc_r_pattern row for the case, or invokes the asymptotic
+ * decider when ::dmc_ambig_table marks it ambiguous. Returning several contours where a
+ * cell contains disconnected surface sheets is precisely what lets Dual Marching Cubes emit
+ * multiple dual vertices and so avoid the pinch points a single-vertex-per-cell method
+ * produces.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] i_case The cell's 8-bit corner sign code.
+ * @param[in] s The cell's eight corner values.
+ * @param[out] contour_sizes Edge count of each contour.
+ * @param[out] contour_edges Local edge indices of each contour.
+ * @return Number of contours, 0 for a fully inside or outside cell.
+ * @note At most four contours fit in a cell, which bounds the output arrays.
+ */
 __device__ inline int extract_cell_contours(
     float iso,
     int i_case,
@@ -215,6 +264,23 @@ __device__ inline int extract_cell_contours(
 // -----------------------------------------------------------------------------------------
 // Kernel 1: Count Contours and Edge Crossings per Voxel
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Counts the independent contours and edge instances of every voxel.
+ * @details Sizing pass for Dual Marching Cubes. One thread per voxel: the corner sign code
+ * selects a row of ::dmc_r_pattern giving how many separate contours the cell contains,
+ * and ambiguous cases are resolved on the fly by the asymptotic decider. Cells that Dual
+ * Contouring would collapse to one vertex may hold several contours here -- that
+ * multiplicity is exactly what prevents pinch points and guarantees manifold output.
+ * Counting first lets the host prefix-sum exact offsets so the extraction pass writes
+ * without atomics.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] contour_counts Device array of per-voxel contour counts, one dual vertex each.
+ * @param[out] edge_instance_counts Device array of per-voxel (contour, edge) instance counts.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void dmc_count_contours_kernel(
     const int *__restrict__ voxels,
     const float *__restrict__ sdf,
@@ -266,6 +332,36 @@ __global__ void dmc_count_contours_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 2: Extract Dual Vertices and Emit Edge Incidences
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Emits every contour's dual vertex and its bipolar edge keys.
+ * @details One thread per voxel, writing at the offsets computed by the counting pass. For
+ * each contour the vertex starts at the centroid of its edge crossings and is then pushed
+ * onto the exact trilinear level set by @p project_iters Newton-Raphson steps, using the
+ * analytic trilinear value and gradient. Projection is what removes the faceting a plain
+ * centroid leaves on curved surfaces. Supplying @p precomputed_vertices skips both the
+ * centroid and the projection.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] colors Device array of per-grid-vertex colours, or `nullptr`.
+ * @param[in] precomputed_vertices Device array of externally supplied dual vertices, or
+ *     `nullptr` to solve them here.
+ * @param[in] num_channels Colour channels per vertex.
+ * @param[in] vert_offsets Device array of per-voxel vertex write offsets.
+ * @param[in] edge_offsets Device array of per-voxel edge instance write offsets.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] project_iters Newton-Raphson iterations; 0 leaves the centroid unprojected.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] out_vertices Device array receiving dual vertices.
+ * @param[out] out_colors Device array receiving interpolated colours.
+ * @param[out] out_edge_keys Device array of 64-bit shared-edge keys.
+ * @param[out] out_dual_vert_and_edge Device array packing the source vertex and local edge.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Vertices are clamped to their cell, so a diverging Newton step cannot place
+ * geometry outside the voxel that produced it.
+ * @warning Each iteration costs a trilinear value and gradient evaluation. Beyond a handful
+ * of steps the surface has converged and further iterations only cost time.
+ */
 __global__ void dmc_extract_dual_vertices_and_edges_kernel(
     const float3 *__restrict__ grid_vertices,
     const int *__restrict__ voxels,
@@ -429,6 +525,26 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 3: Gather Dual Quads from Sorted Edge Incidences
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Builds one dual face per unique shared edge.
+ * @details One thread per edge instance; only the thread beginning a run of equal keys
+ * proceeds, electing a single owner per unique edge. That owner gathers the dual vertices
+ * of the contours meeting at the edge and emits a quad, or a triangle at the domain
+ * boundary. Because Dual Marching Cubes may contribute several contours from one voxel,
+ * the vertices gathered here are per-contour rather than per-cell, which is what keeps the
+ * surface manifold where cells are ambiguous.
+ * @param[in] sorted_edge_keys Device array of edge keys in ascending order.
+ * @param[in] sorted_dual_vert_and_edge Device array of packed vertex and local edge
+ *     identifiers, permuted alongside the keys.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] total_instances Number of (contour, edge) instances.
+ * @param[out] out_quads Device array receiving dual faces.
+ * @param[in,out] out_quad_count Device counter, atomically incremented per face.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Requires @p sorted_edge_keys to be sorted so equal keys form contiguous runs.
+ * @warning The output slot is claimed with `atomicAdd`, so face ordering varies between
+ * runs. Geometry is unaffected, but a byte-identical mesh is not guaranteed.
+ */
 __global__ void dmc_gather_quads_kernel(
     const uint64_t *__restrict__ sorted_edge_keys,
     const uint32_t *__restrict__ sorted_dual_vert_and_edge,
@@ -505,6 +621,20 @@ __global__ void dmc_gather_quads_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 4: Optimal Quad-to-Triangle Splitting
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Splits dual quads into triangles along the better-conditioned diagonal.
+ * @details One thread per quad, choosing the split that maximises the minimum triangle
+ * angle so the output avoids slivers. Boundary faces already emitted as triangles pass
+ * through unchanged. Skipping this kernel entirely leaves a pure quad mesh.
+ * @param[in] quads Device array of dual faces.
+ * @param[in] vertices Device array of dual vertices.
+ * @param[in] num_quads Number of faces.
+ * @param[out] out_triangles Device array receiving triangle vertex index triples.
+ * @param[in,out] out_tri_count Device counter, atomically incremented per triangle.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The output slot is claimed with `atomicAdd`, so face ordering varies between
+ * runs. Geometry is unaffected, but a byte-identical mesh is not guaranteed.
+ */
 __global__ void dmc_quad_to_triangle_kernel(
     const int4 *__restrict__ quads,
     const float3 *__restrict__ vertices,
@@ -543,6 +673,31 @@ __global__ void dmc_quad_to_triangle_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 5: Differentiable Backward Kernel
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Backpropagates dual vertex gradients into the scalar field and colours.
+ * @details One thread per voxel, recomputing the forward pass's contour decomposition so
+ * the adjoint follows the same path. Each dual vertex's gradient is distributed to the
+ * corner values through the derivatives of its edge crossings; colour gradients follow the
+ * interpolation weights.
+ * @param[in] grad_vertices Device array of incoming dual vertex gradients.
+ * @param[in] grad_colors Device array of incoming colour gradients, or `nullptr`.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] colors Device array of per-grid-vertex colours, or `nullptr`.
+ * @param[in] num_channels Colour channels per vertex.
+ * @param[in] vert_offsets Device array of per-voxel vertex offsets from the forward pass.
+ * @param[in] iso Isolevel used in the forward pass.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] grad_sdf Device array accumulating scalar field gradients.
+ * @param[out] grad_colors_in Device array accumulating colour gradients.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Accumulation into shared grid vertices uses `atomicAdd`, so results are not
+ * bitwise reproducible between runs.
+ * @warning The Newton projection applied in the forward pass is not differentiated; the
+ * adjoint treats the projected vertex as if it came from the unprojected centroid, so
+ * gradients are approximate when @p project_iters was large.
+ */
 __global__ void dmc_backward_kernel(
     const float3 *__restrict__ grad_vertices,
     const float *__restrict__ grad_colors,

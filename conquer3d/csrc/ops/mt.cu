@@ -23,21 +23,55 @@
 
 namespace mt
 {
+    /**
+     * @brief Thrust predicate selecting tets the surface crosses.
+     * @details A tet is active when its sign code is neither all-inside nor
+     * all-outside. Used to stream-compact the active set, so later stages launch only
+     * over tets that actually contribute geometry.
+     */
     struct is_active_tet
     {
+        /**
+         * @brief Tests whether a sign code marks an active tetrahedron.
+         * @param[in] code The tetrahedron's corner sign code.
+         * @return 1 when the surface crosses it, 0 otherwise.
+         */
         __host__ __device__ int operator()(const uint8_t code) const
         {
             return (code > 0 && code < 15) ? 1 : 0;
         }
     };
 
+    /**
+     * @brief Thrust functor mapping a sign code to its triangle count.
+     * @details Feeds the exclusive scan that assigns each active tet a disjoint output
+     * range, so triangle assembly needs no atomics.
+     */
     struct num_triangles_functor
     {
+        /**
+         * @brief Looks up the triangle count implied by a sign code.
+         * @param[in] code The tetrahedron's corner sign code.
+         * @return Number of triangles the tetrahedron emits.
+         */
         __device__ uint32_t operator()(const uint8_t code) const {
             return (tetTriNumTable[code + 1] - tetTriNumTable[code]) / 3;
         }
     };
 
+    /**
+     * @brief Packs four corner signs into a Marching Tetrahedra case index.
+     * @details Sets bit $i$ when corner $i$ lies below the isolevel, giving a 4-bit code with
+     * 16 possible cases -- none of them ambiguous, which is why tetrahedral extraction needs no
+     * decider.
+     * @param[in] sv0 Value at corner 0.
+     * @param[in] sv1 Value at corner 1.
+     * @param[in] sv2 Value at corner 2.
+     * @param[in] sv3 Value at corner 3.
+     * @param[in] iso Isolevel separating inside from outside.
+     * @param[out] tet_code The resulting 4-bit case index.
+     * @note Codes 0 and 15 mean the tetrahedron is entirely outside or inside.
+     */
     __device__ __forceinline__ void compute_tet_code(
         float sv0, float sv1, float sv2, float sv3,
         float iso, uint8_t &tet_code)
@@ -53,7 +87,25 @@ namespace mt
             tet_code |= 8;
     }
 
-    __global__ void compute_active_tets_kernel(
+/**
+ * @brief Classifies every tet by the sign pattern of its four corners.
+ * @details Stage 1 of extraction. One thread per tet; each compares its corner values
+ * against the isolevel and packs the results into a 16-case code. The code alone
+ * determines the tet's surface topology, so all later stages are table lookups rather
+ * than searches. Inactive tets -- entirely inside or outside -- receive code 0 and are
+ * compacted away by the host before stage 2, which is what makes cost scale with surface
+ * area rather than volume.
+ *
+ * A tetrahedron has only 16 cases and none of them is ambiguous, which is why Marching
+ * Tetrahedra needs no asymptotic decider and cannot produce cracks.
+ * @param[in] num_tets Number of tets.
+ * @param[in] tets Device array of corner indices, four per tet.
+ * @param[in] vert_values Device array of scalar field values at the grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[out] tet_codes Device array of one sign code per tet.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_active_tets_kernel(
         const uint32_t num_tets,
         const uint32_t *__restrict__ tets,
         const float *__restrict__ vert_values,
@@ -77,7 +129,23 @@ namespace mt
         tet_codes[idx] = tet_code;
     }
 
-    __global__ void compute_active_edges_kernel(
+/**
+ * @brief Emits the bipolar edge keys of every active tet.
+ * @details Stage 2. One thread per active tet, writing an ::Edge key -- the sorted pair
+ * of grid vertex indices -- for each edge the surface crosses. Keys are deliberately
+ * emitted with duplicates: an edge shared by several tets produces one key per tet,
+ * and the host then sorts and uniques them. Deduplicating this way welds the mesh, so a
+ * vertex on a shared edge exists exactly once and the result is watertight rather than a
+ * soup of unconnected tet patches.
+ * @param[in] num_active_tets Number of active tets after compaction.
+ * @param[in] tets Device array of corner indices, four per tet.
+ * @param[in] used_tet_index Device array mapping compacted index to original tet index.
+ * @param[in] used_tet_codes Device array of sign codes for the active tets.
+ * @param[out] active_edges Device array receiving the emitted edge keys, with duplicates.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Uses the ::tetEdgeTable / ::tetTriTable table to look up which edges a case activates.
+ */
+__global__ void compute_active_edges_kernel(
         const uint32_t num_active_tets,
         const uint32_t *tets,
         const uint32_t *used_tet_index,
@@ -110,7 +178,24 @@ namespace mt
         }
     }
 
-    __global__ void build_edge_map_kernel(
+/**
+ * @brief Maps each active tet's local edges onto global output vertex indices.
+ * @details Stage 3. After the host has sorted and uniqued the edge keys, this kernel binds
+ * tet-local edge slots to positions in the deduplicated vertex array. One thread per
+ * active tet, binary-searching the unique key array for each of its bipolar edges. The
+ * resulting map is what lets stage 5 emit triangle indices without any further searching.
+ * @param[in] num_active_tets Number of active tets.
+ * @param[in] num_unique_edges Number of deduplicated edge keys.
+ * @param[in] tets Device array of corner indices, four per tet.
+ * @param[in] used_tet_index Device array mapping compacted index to original tet index.
+ * @param[in] used_tet_codes Device array of sign codes for the active tets.
+ * @param[in] unique_edges Device array of sorted, deduplicated edge keys.
+ * @param[out] tet_edge_to_vert_idx Device array mapping each tet-local edge slot to a
+ *     global vertex index.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Requires @p unique_edges to be sorted; the lookup is a binary search.
+ */
+__global__ void build_edge_map_kernel(
         const uint32_t num_active_tets,
         const uint32_t num_unique_edges,
         const uint32_t *tets,
@@ -166,7 +251,30 @@ namespace mt
         }
     }
 
-    __global__ void interpolate_vertices_kernel(
+/**
+ * @brief Places one output vertex on each unique bipolar edge.
+ * @details Stage 4. One thread per unique edge, linearly interpolating the crossing point
+ * $\mathbf{p} = \mathbf{p}_0 + t(\mathbf{p}_1 - \mathbf{p}_0)$ with
+ * $t = (\text{iso} - f_0) / (f_1 - f_0)$. Normals and colours defined on the grid are
+ * interpolated with the same $t$, so all attributes stay consistent with the geometry.
+ * Because each edge is visited once, every vertex is written exactly once and no atomics
+ * are needed.
+ * @param[in] num_unique_edges Number of unique edges, one output vertex each.
+ * @param[in] unique_edges Device array of deduplicated edge keys.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] vert_values Device array of scalar field values at grid vertices.
+ * @param[in] grid_normals Device array of per-vertex normals, or `nullptr`.
+ * @param[in] grid_colors Device array of per-vertex colours, or `nullptr`.
+ * @param[in] iso Isolevel being extracted.
+ * @param[out] out_verts Device array of interpolated surface vertices.
+ * @param[out] out_normals Device array of interpolated normals, when requested.
+ * @param[out] out_colors Device array of interpolated colours, when requested.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The interpolation denominator $f_1 - f_0$ is non-zero for any genuinely bipolar
+ * edge, but a field with exactly equal corner values either side of the isolevel would
+ * divide by zero. Such edges are excluded upstream by the sign test.
+ */
+__global__ void interpolate_vertices_kernel(
         const uint32_t num_unique_edges,
         const Edge *__restrict__ unique_edges,
         const float3 *__restrict__ grid_vertices,
@@ -244,7 +352,23 @@ namespace mt
         }
     }
 
-    __global__ void assemble_triangles_kernel(
+/**
+ * @brief Writes the triangle index triples for every active tet.
+ * @details Stage 5. One thread per active tet. The sign code selects a row of the
+ * ::tetEdgeTable / ::tetTriTable triangle table, whose tet-local edge slots are translated into global vertex
+ * indices through the stage 3 map. Each tet's output begins at a precomputed prefix-sum
+ * offset, so threads write to disjoint ranges without atomics or contention.
+ * @param[in] num_active_tets Number of active tets.
+ * @param[in] used_tet_codes Device array of sign codes for the active tets.
+ * @param[in] tet_edge_to_vert_idx Device array mapping tet-local edge slots to global
+ *     vertex indices.
+ * @param[in] tet_triangle_prefix_sums Device array of per-tet output offsets.
+ * @param[out] out_triangles Device array receiving triangle vertex index triples.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Winding follows the table, giving outward-facing normals for a field that is
+ * negative inside.
+ */
+__global__ void assemble_triangles_kernel(
         const uint32_t num_active_tets,
         const uint8_t *__restrict__ used_tet_codes,
         const uint32_t *__restrict__ tet_edge_to_vert_idx,
@@ -281,6 +405,16 @@ namespace mt
         }
     }
 
+    /**
+     * @brief Launches stage 1: classify every tet by its corner signs.
+     * @details Host wrapper sizing a 1D grid over all tets and launching the classification
+     * kernel. See the kernel for the parallel decomposition.
+     * @param[in] num_tets Number of tets.
+     * @param[in] tets Device array of corner indices.
+     * @param[in] vert_values Device array of scalar field values.
+     * @param[in] iso Isolevel separating inside from outside.
+     * @param[out] tet_codes Device array of per-tet sign codes.
+     */
     void compute_active_tets(
         const uint32_t num_tets,
         const uint32_t *tets,
@@ -294,6 +428,15 @@ namespace mt
             num_tets, tets, vert_values, iso, tet_codes);
     }
 
+    /**
+     * @brief Counts the tets the surface crosses.
+     * @details Reduces the sign codes on device, treating any code other than all-inside or
+     * all-outside as active. The host needs this count before it can size the compacted arrays.
+     * @param[in] num_tets Number of tets.
+     * @param[in] tet_codes Device array of per-tet sign codes.
+     * @param[out] num_active_tets Receives the active count.
+     * @note Synchronises to bring the count back to the host.
+     */
     void compute_number_active_tets(
         const uint32_t num_tets,
         uint8_t *tet_codes,
@@ -319,6 +462,15 @@ namespace mt
         num_active_tets = last_prefix_sum + ((last_flag > 0 && last_flag < 15) ? 1 : 0);
     }
 
+    /**
+     * @brief Compacts active tets into dense arrays.
+     * @details Stream-compacts indices and codes so every later stage launches over active
+     * tets only. This is what makes cost scale with surface area rather than volume.
+     * @param[in] num_tets Number of tets.
+     * @param[in] tet_codes Device array of per-tet sign codes.
+     * @param[out] used_tet_index Device array mapping compacted index to original index.
+     * @param[out] used_tet_code Device array of the active tets' sign codes.
+     */
     void compact_active_tets(
         const uint32_t num_tets,
         const uint8_t *tet_codes,
@@ -347,6 +499,16 @@ namespace mt
         );
     }
 
+    /**
+     * @brief Launches stage 2: emit bipolar edge keys for the active tets.
+     * @details Host wrapper over the edge emission kernel. Keys are emitted with duplicates;
+     * the caller sorts and uniques them to weld shared vertices.
+     * @param[in] num_active_tets Number of active tets.
+     * @param[in] tets Device array of corner indices.
+     * @param[in] used_tet_index Device array mapping compacted index to original index.
+     * @param[in] used_tet_codes Device array of active sign codes.
+     * @param[out] active_edges Device array of emitted edge keys.
+     */
     void compute_active_edges(
         const uint32_t num_active_tets,
         const uint32_t *tets,
@@ -361,6 +523,14 @@ namespace mt
             num_active_tets, tets, used_tet_index, used_tet_codes, active_edges);
     }
 
+    /**
+     * @brief Sorts and deduplicates the emitted edge keys.
+     * @details Device sort followed by a unique pass. Deduplication is what welds the mesh:
+     * an edge shared by several cells yields exactly one output vertex, so the result is
+     * watertight rather than a soup of disconnected patches.
+     * @return The unique edge keys as a PyTorch tensor.
+     * @note Synchronises to bring the unique count back to the host.
+     */
     torch::Tensor compute_unique_active_edges(
         const uint32_t num_active_tets,
         Edge *active_edges,
@@ -386,6 +556,14 @@ namespace mt
         return unique_edges_t;
     }
 
+    /**
+     * @brief Launches stage 3: bind tet-local edge slots to global vertex indices.
+     * @details Host wrapper over the edge-map kernel, run after deduplication so the binary
+     * search has a sorted key array to work against.
+     * @param[in] num_active_tets Number of active tets.
+     * @param[in] num_unique_edges Number of deduplicated edges.
+     * @param[out] tet_edge_to_vert_idx Device array mapping local edge slots to vertices.
+     */
     void build_edge_map(
         const uint32_t num_active_tets,
         const uint32_t num_unique_edges,
@@ -402,6 +580,13 @@ namespace mt
             num_active_tets, num_unique_edges, tets, used_tet_index, used_tet_codes, unique_edges, tet_edge_to_vert_idx);
     }
 
+    /**
+     * @brief Launches stage 4: place one vertex on each unique bipolar edge.
+     * @details Host wrapper sizing a 1D grid over the unique edges.
+     * @param[in] num_unique_edges Number of unique edges, one output vertex each.
+     * @param[in] iso Isolevel being extracted.
+     * @param[out] out_verts Device array of interpolated surface vertices.
+     */
     void interpolate_vertices(
         const uint32_t num_unique_edges,
         const Edge *unique_edges,
@@ -421,6 +606,17 @@ namespace mt
             num_unique_edges, unique_edges, grid_vertices, vert_values, grid_normals, grid_colors, iso, out_verts, out_normals, out_colors);
     }
 
+    /**
+     * @brief Counts output triangles and prefix-sums their per-tet offsets.
+     * @details Each sign code implies a fixed triangle count, so an exclusive scan over the
+     * active tets gives every tet a disjoint output range. Assembly then writes without
+     * atomics or contention.
+     * @param[in] num_active_tets Number of active tets.
+     * @param[in] used_tet_codes Device array of active sign codes.
+     * @param[out] num_triangles Receives the total triangle count.
+     * @param[out] tet_triangle_prefix_sums Device array of per-tet output offsets.
+     * @note Synchronises to bring the total back to the host.
+     */
     void compute_number_triangles(
         const uint32_t num_active_tets,
         const uint8_t *used_tet_codes,
@@ -439,6 +635,13 @@ namespace mt
         thrust::exclusive_scan(policy, num_tris_iter, num_tris_iter + num_active_tets, d_prefix_sum);
     }
 
+    /**
+     * @brief Launches stage 5: write the triangle index triples.
+     * @details Host wrapper over the assembly kernel; each tet writes into the disjoint
+     * range given by its prefix-sum offset.
+     * @param[in] num_active_tets Number of active tets.
+     * @param[out] out_triangles Device array of triangle vertex index triples.
+     */
     void assemble_triangles(
         const uint32_t num_active_tets,
         const uint8_t *used_tet_codes,
@@ -453,6 +656,15 @@ namespace mt
             num_active_tets, used_tet_codes, tet_edge_to_vert_idx, tet_triangle_prefix_sums, out_triangles);
     }
 
+    /**
+     * @brief End-to-end Marching Tetrahedra isosurface extraction on the GPU.
+     * @details The host dispatcher orchestrating the whole pipeline: classify, compact, emit
+     * edges, deduplicate, map, interpolate, and assemble. Output buffers are allocated through
+     * PyTorch, so the extracted mesh needs no copy to be returned to Python.
+     * @return A tuple of vertices, triangles, and the optional interpolated attributes.
+     * @note Three device synchronisations are unavoidable -- after the active count, the unique
+     * edge count, and the triangle count -- because each sizes the next allocation.
+     */
     std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>> marching_tetrahedra(
         const uint32_t num_tets,
         const float3* __restrict__ grid_vertices,
@@ -548,7 +760,31 @@ namespace mt
         return std::make_tuple(out_vertices, out_triangles, out_normals_opt, out_colors_opt, out_unique_edges_opt);
     }
 
-    __global__ void backward_dmt_kernel(
+/**
+ * @brief Backpropagates vertex gradients into the scalar field and colours.
+ * @details The analytical adjoint of stage 4. A vertex sits at
+ * $\mathbf{p} = \mathbf{p}_0 + t(\mathbf{p}_1 - \mathbf{p}_0)$ with
+ * $t = (\text{iso} - f_0) / (f_1 - f_0)$, so $\partial t / \partial f_0$ and
+ * $\partial t / \partial f_1$ are available in closed form and the chain rule gives the
+ * field gradient directly -- no finite differences, no autograd graph over the extraction
+ * itself. One thread per output vertex.
+ * @param[in] n_verts Number of output vertices.
+ * @param[in] unique_edges Device array of the edge keys that produced them.
+ * @param[in] grid_values Device array of scalar field values at grid vertices.
+ * @param[in] grid_coords Device array of grid vertex coordinates.
+ * @param[in] grid_colors Device array of per-vertex colours, or `nullptr`.
+ * @param[in] adj_verts Device array of incoming vertex position gradients.
+ * @param[in] adj_colors Device array of incoming colour gradients, or `nullptr`.
+ * @param[in] iso Isolevel used in the forward pass.
+ * @param[out] adj_values Device array accumulating scalar field gradients.
+ * @param[out] adj_grid_colors Device array accumulating colour gradients.
+ * @param[in] with_colors Whether colour gradients are propagated.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Grid vertices are shared between edges, so several threads accumulate into the
+ * same slot. Writes go through `atomicAdd`, which makes the reduction order
+ * nondeterministic and the result bitwise non-reproducible between runs.
+ */
+__global__ void backward_dmt_kernel(
         const uint32_t n_verts,
         const Edge *unique_edges,
         const float *grid_values,
@@ -621,6 +857,16 @@ namespace mt
         atomicAdd(&adj_values[v1_idx], grad_v1);
     }
 
+    /**
+     * @brief Launches the analytical backward pass.
+     * @details Host wrapper over the adjoint kernel, which differentiates the edge interpolation
+     * in closed form.
+     * @param[in] n_verts Number of output vertices.
+     * @param[in] iso Isolevel used in the forward pass.
+     * @param[out] adj_values Device array accumulating scalar field gradients.
+     * @warning Accumulation into shared grid vertices is atomic, so results are not bitwise
+     * reproducible between runs.
+     */
     void backward(
         const uint32_t n_verts,
         const Edge *unique_edges,

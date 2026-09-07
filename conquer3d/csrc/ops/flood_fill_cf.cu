@@ -15,6 +15,19 @@
 
 namespace ops {
 
+    /**
+     * @brief Compare-and-swap on a single byte, emulated with 32-bit atomics.
+     * @details CUDA provides no 8-bit `atomicCAS`, so this reads the containing aligned word,
+     * splices the byte, and retries until the word-wide CAS succeeds. Storing occupancy labels
+     * as bytes rather than words cuts the mask's footprint fourfold, which is what keeps a
+     * $1024^3$ grid resident.
+     * @param[in,out] address Byte to update; may be unaligned.
+     * @param[in] compare Expected current value.
+     * @param[in] val Replacement value.
+     * @return The value found at @p address before the attempt.
+     * @warning Contention is per 32-bit word, not per byte: four threads updating adjacent
+     * bytes serialise against each other even though their targets are disjoint.
+     */
     __device__ static int8_t atomicCAS_int8_cf(int8_t* address, int8_t compare, int8_t val) {
         int32_t* address_as_int = (int32_t*)((uintptr_t)address & ~3);
         int shift = (((uintptr_t)address & 3) * 8);
@@ -32,6 +45,24 @@ namespace ops {
         return (int8_t)((old >> shift) & 0xff);
     }
 
+    /**
+     * @brief Tests whether a segment intersects any mesh triangle.
+     * @details Traverses the BVH with the segment's own bounding box and applies the exact
+     * Moller-Trumbore test to surviving leaves, returning at the first hit. Testing the whole
+     * segment rather than its endpoints is what stops the flood fill tunnelling through a wall
+     * thinner than the voxel spacing.
+     * @param[in] p0 Segment start.
+     * @param[in] p1 Segment end.
+     * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+     * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+     * @param[in] bvh_children Device array of BVH child index pairs.
+     * @param[in] object_ids Device array mapping leaves to triangle indices.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @return True if the segment meets any triangle.
+     * @note Degenerate segments shorter than 1e-8 return false.
+     * @warning Uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory.
+     */
     __device__ __forceinline__ bool test_segment_intersect_bvh_cf(
         const float3& p0, const float3& p1,
         const float3* __restrict__ bvh_aabb_mins,
@@ -109,6 +140,22 @@ namespace ops {
         return false;
     }
 
+    /**
+     * @brief Tests whether an axis-aligned box overlaps any mesh triangle.
+     * @details Traverses the BVH and applies the Akenine-Moller separating-axis test to
+     * surviving leaves, stopping at the first hit. Used to classify whole coarse blocks in one
+     * test, so empty regions can be resolved without descending to fine voxels.
+     * @param[in] box_min Box lower bound.
+     * @param[in] box_max Box upper bound.
+     * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+     * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+     * @param[in] bvh_children Device array of BVH child index pairs.
+     * @param[in] object_ids Device array mapping leaves to triangle indices.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @return True if the box meets any triangle.
+     * @warning Uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory.
+     */
     __device__ __forceinline__ bool test_box_overlap_bvh_cf(
         const float3& box_min, const float3& box_max,
         const float3* __restrict__ bvh_aabb_mins,
@@ -163,7 +210,34 @@ namespace ops {
     // Initialization Kernels
     // -------------------------------------------------------------
 
-    __global__ void init_coarse_grid_kernel(
+/**
+ * @brief Classifies each coarse block as empty, surface-crossing, or unknown.
+ * @details Stage 1 of the coarse-fine flood fill. The domain is tiled into blocks of
+ * $B_X \times B_Y \times B_Z$ fine voxels and each block's bounds are tested against the
+ * mesh BVH. Blocks the surface misses can be filled wholesale at coarse resolution; only
+ * blocks it crosses are refined to individual voxels later. That two-level split is what
+ * makes the fill scale to $1024^3$, where a flat frontier would need thousands of launches.
+ * @param[out] coarse_mask Device array of one label per coarse block.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @note Launched with one thread per coarse block, `int64_t` indexed.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void init_coarse_grid_kernel(
         int8_t* __restrict__ coarse_mask,
         int CX, int CY, int CZ,
         int BX, int BY, int BZ,
@@ -206,7 +280,20 @@ namespace ops {
         coarse_mask[idx] = intersects ? (int8_t)1 : (int8_t)-2;
     }
 
-    __global__ void init_perimeter_seeds_kernel(
+/**
+ * @brief Seeds the coarse fill from blocks on the domain boundary.
+ * @details Stage 2. One thread per coarse block; those on the outer faces are definitionally
+ * outside the geometry and are relabelled as exterior, giving the propagation its starting
+ * set.
+ * @param[in,out] coarse_mask Device array of coarse block labels.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @note Launched with one thread per coarse block.
+ * @warning Assumes the grid bounds enclose the geometry with padding. Without it, surface
+ * blocks touch the boundary and the fill leaks inside.
+ */
+__global__ void init_perimeter_seeds_kernel(
         int8_t* __restrict__ coarse_mask,
         int CX, int CY, int CZ)
     {
@@ -226,7 +313,23 @@ namespace ops {
         }
     }
 
-    __global__ void init_boundary_perimeter_faces_kernel(
+/**
+ * @brief Seeds fine voxels on the outer faces of boundary-adjacent blocks.
+ * @details Stage 3. Surface-crossing blocks on the domain boundary need their fine voxels
+ * seeded individually, since only part of such a block is exterior.
+ * @param[in] boundary_coords Device array of coarse coordinates for surface blocks.
+ * @param[in,out] fine_masks Device array of per-block fine voxel labels.
+ * @param[in] num_boundary_blocks Number of surface-crossing blocks.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @note Launched with one CUDA block per boundary coarse block, threads cooperating over
+ * that block's fine voxels through shared memory.
+ */
+__global__ void init_boundary_perimeter_faces_kernel(
         const int3* __restrict__ boundary_coords,
         int8_t* __restrict__ fine_masks,
         int num_boundary_blocks,
@@ -261,7 +364,34 @@ namespace ops {
     // -------------------------------------------------------------
 
     // Step A: Coarse-to-Coarse Expansion
-    __global__ void coarse_to_coarse_kernel(
+/**
+ * @brief Propagates the exterior label between neighbouring coarse blocks.
+ * @details Stage 4, the cheap bulk of the fill. One thread per unknown block: if any
+ * face-adjacent neighbour is exterior and the connecting region is unobstructed, the block
+ * becomes exterior too. Empty space is resolved a whole block at a time here, so the
+ * expensive per-voxel work is confined to the surface.
+ * @param[in,out] coarse_mask Device array of coarse block labels.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @param[out] changed_flag Device flag set when any label changes.
+ * @note Launched with one thread per coarse block, relaunched by the host until quiescent.
+ * @note Sets @p changed_flag when any label changes, which is how the host knows whether
+ * another sweep is required; the fill has converged once a full round leaves it clear.
+ */
+__global__ void coarse_to_coarse_kernel(
         int8_t* __restrict__ coarse_mask,
         int CX, int CY, int CZ,
         int BX, int BY, int BZ,
@@ -320,7 +450,37 @@ namespace ops {
     }
 
     // Step B: Coarse-to-Fine Face Seeding
-    __global__ void coarse_to_fine_kernel(
+/**
+ * @brief Transfers the exterior label from coarse blocks into fine voxels.
+ * @details Stage 5. Where a resolved exterior block adjoins a surface-crossing one, its
+ * label is pushed across the shared face onto that block's boundary fine voxels, handing
+ * the fill down a level.
+ * @param[in] boundary_coords Device array of coarse coordinates for surface blocks.
+ * @param[in] coarse_mask Device array of coarse block labels.
+ * @param[in,out] fine_masks Device array of per-block fine voxel labels.
+ * @param[in] num_boundary_blocks Number of surface-crossing blocks.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @param[out] changed_flag Device flag set when any label changes.
+ * @note Launched with one CUDA block per boundary coarse block, threads cooperating over
+ * that block's fine voxels through shared memory.
+ * @note Sets @p changed_flag when any label changes, which is how the host knows whether
+ * another sweep is required; the fill has converged once a full round leaves it clear.
+ */
+__global__ void coarse_to_fine_kernel(
         const int3* __restrict__ boundary_coords,
         const int8_t* __restrict__ coarse_mask,
         int8_t* __restrict__ fine_masks,
@@ -389,7 +549,37 @@ namespace ops {
     }
 
     // Step C: Fine Intra-Block Shared Memory BFS
-    __global__ void fine_intra_block_bfs_kernel(
+/**
+ * @brief Runs a breadth-first fill within each surface-crossing block.
+ * @details Stage 6, where the actual surface resolution happens. One CUDA block per coarse
+ * block iterates its fine voxels in shared memory until no further label changes, testing
+ * each candidate step against the mesh so the fill cannot pass through a wall. Keeping the
+ * whole sweep in shared memory means the many iterations needed near the surface never
+ * touch global memory.
+ * @param[in] boundary_coords Device array of coarse coordinates for surface blocks.
+ * @param[in,out] fine_masks Device array of per-block fine voxel labels.
+ * @param[in] num_boundary_blocks Number of surface-crossing blocks.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @param[out] changed_flag Device flag set when any label changes.
+ * @note Launched with one CUDA block per boundary coarse block, threads cooperating over
+ * that block's fine voxels through shared memory.
+ * @warning Shared memory must accommodate one block's fine voxel labels, which bounds how
+ * large $B_X \times B_Y \times B_Z$ may be.
+ * @note Sets @p changed_flag when any label changes, which is how the host knows whether
+ * another sweep is required; the fill has converged once a full round leaves it clear.
+ */
+__global__ void fine_intra_block_bfs_kernel(
         const int3* __restrict__ boundary_coords,
         int8_t* __restrict__ fine_masks,
         int num_boundary_blocks,
@@ -470,7 +660,37 @@ namespace ops {
     }
 
     // Step D: Fine-to-Fine Inter-Block Boundary Exchange
-    __global__ void fine_to_fine_inter_block_kernel(
+/**
+ * @brief Propagates fine voxel labels across adjoining surface blocks.
+ * @details Stage 7. Intra-block sweeps cannot see past their own boundary, so this kernel
+ * carries labels across shared faces between neighbouring surface-crossing blocks,
+ * consulting @p boundary_lookup to find the neighbour's storage.
+ * @param[in] boundary_coords Device array of coarse coordinates for surface blocks.
+ * @param[in] boundary_lookup Device array mapping coarse index to boundary block slot.
+ * @param[in,out] fine_masks Device array of per-block fine voxel labels.
+ * @param[in] num_boundary_blocks Number of surface-crossing blocks.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @param[out] changed_flag Device flag set when any label changes.
+ * @note Launched with one CUDA block per boundary coarse block, threads cooperating over
+ * that block's fine voxels through shared memory.
+ * @note Sets @p changed_flag when any label changes, which is how the host knows whether
+ * another sweep is required; the fill has converged once a full round leaves it clear.
+ */
+__global__ void fine_to_fine_inter_block_kernel(
         const int3* __restrict__ boundary_coords,
         const int32_t* __restrict__ boundary_lookup,
         int8_t* __restrict__ fine_masks,
@@ -548,7 +768,39 @@ namespace ops {
     }
 
     // Step E: Fine-to-Coarse Seeding
-    __global__ void fine_to_coarse_kernel(
+/**
+ * @brief Promotes fine voxel labels back up to the coarse grid.
+ * @details Stage 8, closing the loop. A surface block that has reached its outer face at
+ * fine resolution can now mark the adjacent coarse block exterior, letting the cheap
+ * coarse propagation resume through the passage the fine sweep just opened. Alternating
+ * between the two levels is what lets the fill navigate narrow channels without paying
+ * fine-resolution cost everywhere.
+ * @param[in] boundary_coords Device array of coarse coordinates for surface blocks.
+ * @param[in] fine_masks Device array of per-block fine voxel labels.
+ * @param[in,out] coarse_mask Device array of coarse block labels.
+ * @param[in] num_boundary_blocks Number of surface-crossing blocks.
+ * @param[in] CX Coarse grid resolution along $x$.
+ * @param[in] CY Coarse grid resolution along $y$.
+ * @param[in] CZ Coarse grid resolution along $z$.
+ * @param[in] BX Fine voxels per coarse block along $x$.
+ * @param[in] BY Fine voxels per coarse block along $y$.
+ * @param[in] BZ Fine voxels per coarse block along $z$.
+ * @param[in] grid_min World coordinate of the grid origin.
+ * @param[in] fine_spacing Per-axis fine voxel size.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] num_objects Number of triangles.
+ * @param[out] changed_flag Device flag set when any label changes.
+ * @note Launched with one CUDA block per boundary coarse block, threads cooperating over
+ * that block's fine voxels through shared memory.
+ * @note Sets @p changed_flag when any label changes, which is how the host knows whether
+ * another sweep is required; the fill has converged once a full round leaves it clear.
+ */
+__global__ void fine_to_coarse_kernel(
         const int3* __restrict__ boundary_coords,
         const int8_t* __restrict__ fine_masks,
         int8_t* __restrict__ coarse_mask,
@@ -628,7 +880,18 @@ namespace ops {
         }
     }
 
-    __global__ void finalize_coarse_interior_kernel(int8_t* coarse_mask, int64_t total_coarse) {
+/**
+ * @brief Labels every block the fill never reached as interior.
+ * @details Final stage. The fill only ever propagates exterior labels, so any block still
+ * unknown once it has converged is enclosed by the surface -- interior by elimination,
+ * without a separate inside test. One thread per coarse block.
+ * @param[in,out] coarse_mask Device array of coarse block labels.
+ * @param[in] total_coarse Number of coarse blocks.
+ * @note Launched with one thread per coarse block, `int64_t` indexed.
+ * @warning Correct only after the fill has fully converged. Running it early freezes
+ * still-unresolved blocks as interior.
+ */
+__global__ void finalize_coarse_interior_kernel(int8_t* coarse_mask, int64_t total_coarse) {
         int64_t idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
         if (idx >= total_coarse) return;
         if (coarse_mask[idx] == -2) {
@@ -640,6 +903,12 @@ namespace ops {
     // Host Pipeline
     // -------------------------------------------------------------
 
+    /**
+     * @brief Picks a coarse block size that divides the grid evenly.
+     * @details Searches for the divisor closest to the requested block size, so the coarse
+     * grid tiles the domain exactly and no partial blocks need special handling.
+     * @return The chosen block dimension.
+     */
     static int choose_best_divisor(int res, int max_b = 8) {
         int best = 1;
         for (int b = max_b; b >= 1; --b) {

@@ -20,16 +20,37 @@
 
 namespace mtg
 {
+    /**
+     * @brief Thrust predicate selecting voxels the surface crosses.
+     * @details A voxel is active when its sign code is neither all-inside nor
+     * all-outside. Used to stream-compact the active set, so later stages launch only
+     * over voxels that actually contribute geometry.
+     */
     struct is_active_voxel
     {
+        /**
+         * @brief Tests whether a sign code marks an active voxel.
+         * @param[in] code The voxel's corner sign code.
+         * @return 1 when the surface crosses it, 0 otherwise.
+         */
         __host__ __device__ int operator()(const uint8_t code) const
         {
             return (code > 0 && code < 255) ? 1 : 0;
         }
     };
 
+    /**
+     * @brief Thrust functor mapping a sign code to its triangle count.
+     * @details Feeds the exclusive scan that assigns each active voxel a disjoint output
+     * range, so triangle assembly needs no atomics.
+     */
     struct num_triangles_functor
     {
+        /**
+         * @brief Looks up the triangle count implied by a sign code.
+         * @param[in] code The voxel's corner sign code.
+         * @return Number of triangles the voxel emits.
+         */
         __device__ uint32_t operator()(const uint8_t code) const {
             uint32_t num = 0;
             for (int t = 0; t < 6; t++) {
@@ -43,6 +64,23 @@ namespace mtg
         }
     };
 
+    /**
+     * @brief Packs eight corner signs into a Marching Cubes case index.
+     * @details Sets bit $i$ when corner $i$ lies below the isolevel, producing the 8-bit code
+     * that indexes every topology table. Branch-free enough to compile to predicated
+     * instructions, so it costs nothing in warp divergence.
+     * @param[in] sv0 Value at corner 0.
+     * @param[in] sv1 Value at corner 1.
+     * @param[in] sv2 Value at corner 2.
+     * @param[in] sv3 Value at corner 3.
+     * @param[in] sv4 Value at corner 4.
+     * @param[in] sv5 Value at corner 5.
+     * @param[in] sv6 Value at corner 6.
+     * @param[in] sv7 Value at corner 7.
+     * @param[in] iso Isolevel separating inside from outside.
+     * @param[out] voxel_code The resulting 8-bit case index.
+     * @note Codes 0 and 255 mean the cell is entirely outside or inside and emits nothing.
+     */
     __device__ __forceinline__ void compute_voxel_code(
         float sv0, float sv1, float sv2, float sv3,
         float sv4, float sv5, float sv6, float sv7,
@@ -59,7 +97,25 @@ namespace mtg
         if (sv7 < iso) voxel_code |= 128;
     }
 
-    __global__ void compute_active_voxels_kernel(
+/**
+ * @brief Classifies every voxel by the sign pattern of its eight corners.
+ * @details Stage 1 of extraction. One thread per voxel; each compares its corner values
+ * against the isolevel and packs the results into a 256-case code. The code alone
+ * determines the voxel's surface topology, so all later stages are table lookups rather
+ * than searches. Inactive voxels -- entirely inside or outside -- receive code 0 and are
+ * compacted away by the host before stage 2, which is what makes cost scale with surface
+ * area rather than volume.
+ *
+ * Each voxel is subsequently split into the six tetrahedra of ::mtg_tets, inheriting
+ * Marching Tetrahedra's freedom from ambiguity while keeping a structured grid.
+ * @param[in] num_voxels Number of voxels.
+ * @param[in] voxels Device array of corner indices, eight per voxel.
+ * @param[in] sdf Device array of scalar field values at the grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[out] voxel_codes Device array of one sign code per voxel.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_active_voxels_kernel(
         const uint32_t num_voxels,
         const uint32_t *__restrict__ voxels,
         const float *__restrict__ sdf,
@@ -88,7 +144,23 @@ namespace mtg
         voxel_codes[idx] = voxel_code;
     }
 
-    __global__ void compute_active_edges_kernel(
+/**
+ * @brief Emits the bipolar edge keys of every active voxel.
+ * @details Stage 2. One thread per active voxel, writing an ::Edge key -- the sorted pair
+ * of grid vertex indices -- for each edge the surface crosses. Keys are deliberately
+ * emitted with duplicates: an edge shared by several voxels produces one key per voxel,
+ * and the host then sorts and uniques them. Deduplicating this way welds the mesh, so a
+ * vertex on a shared edge exists exactly once and the result is watertight rather than a
+ * soup of unconnected voxel patches.
+ * @param[in] num_active_voxels Number of active voxels after compaction.
+ * @param[in] voxels Device array of corner indices, eight per voxel.
+ * @param[in] used_voxel_index Device array mapping compacted index to original voxel index.
+ * @param[in] used_voxel_codes Device array of sign codes for the active voxels.
+ * @param[out] active_edges Device array receiving the emitted edge keys, with duplicates.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Uses the ::mtg_triTable / ::mtg_num_tris table to look up which edges a case activates.
+ */
+__global__ void compute_active_edges_kernel(
         const uint32_t num_active_voxels,
         const uint32_t *voxels,
         const uint32_t *used_voxel_index,
@@ -124,7 +196,24 @@ namespace mtg
         }
     }
 
-    __global__ void build_edge_map_kernel(
+/**
+ * @brief Maps each active voxel's local edges onto global output vertex indices.
+ * @details Stage 3. After the host has sorted and uniqued the edge keys, this kernel binds
+ * voxel-local edge slots to positions in the deduplicated vertex array. One thread per
+ * active voxel, binary-searching the unique key array for each of its bipolar edges. The
+ * resulting map is what lets stage 5 emit triangle indices without any further searching.
+ * @param[in] num_active_voxels Number of active voxels.
+ * @param[in] num_unique_edges Number of deduplicated edge keys.
+ * @param[in] voxels Device array of corner indices, eight per voxel.
+ * @param[in] used_voxel_index Device array mapping compacted index to original voxel index.
+ * @param[in] used_voxel_codes Device array of sign codes for the active voxels.
+ * @param[in] unique_edges Device array of sorted, deduplicated edge keys.
+ * @param[out] voxel_edge_to_vert_idx Device array mapping each voxel-local edge slot to a
+ *     global vertex index.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Requires @p unique_edges to be sorted; the lookup is a binary search.
+ */
+__global__ void build_edge_map_kernel(
         const uint32_t num_active_voxels,
         const uint32_t num_unique_edges,
         const uint32_t *voxels,
@@ -185,7 +274,30 @@ namespace mtg
         }
     }
 
-    __global__ void interpolate_vertices_kernel(
+/**
+ * @brief Places one output vertex on each unique bipolar edge.
+ * @details Stage 4. One thread per unique edge, linearly interpolating the crossing point
+ * $\mathbf{p} = \mathbf{p}_0 + t(\mathbf{p}_1 - \mathbf{p}_0)$ with
+ * $t = (\text{iso} - f_0) / (f_1 - f_0)$. Normals and colours defined on the grid are
+ * interpolated with the same $t$, so all attributes stay consistent with the geometry.
+ * Because each edge is visited once, every vertex is written exactly once and no atomics
+ * are needed.
+ * @param[in] num_out_vertices Number of unique edges, one output vertex each.
+ * @param[in] unique_edges Device array of deduplicated edge keys.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] values Device array of scalar field values at grid vertices.
+ * @param[in] grid_normals Device array of per-vertex normals, or `nullptr`.
+ * @param[in] grid_colors Device array of per-vertex colours, or `nullptr`.
+ * @param[in] iso Isolevel being extracted.
+ * @param[out] out_verts Device array of interpolated surface vertices.
+ * @param[out] out_normals Device array of interpolated normals, when requested.
+ * @param[out] out_colors Device array of interpolated colours, when requested.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The interpolation denominator $f_1 - f_0$ is non-zero for any genuinely bipolar
+ * edge, but a field with exactly equal corner values either side of the isolevel would
+ * divide by zero. Such edges are excluded upstream by the sign test.
+ */
+__global__ void interpolate_vertices_kernel(
         const uint32_t num_out_vertices,
         const Edge* unique_edges,
         const float3* grid_vertices,
@@ -240,6 +352,16 @@ namespace mtg
         if (has_colors) out_colors[v_idx] = c;
     }
 
+    /**
+     * @brief Launches stage 1: classify every voxel by its corner signs.
+     * @details Host wrapper sizing a 1D grid over all voxels and launching the classification
+     * kernel. See the kernel for the parallel decomposition.
+     * @param[in] num_voxels Number of voxels.
+     * @param[in] voxels Device array of corner indices.
+     * @param[in] sdf Device array of scalar field values.
+     * @param[in] iso Isolevel separating inside from outside.
+     * @param[out] voxel_codes Device array of per-voxel sign codes.
+     */
     void compute_active_voxels(
         const uint32_t num_voxels,
         const uint32_t *voxels,
@@ -253,6 +375,16 @@ namespace mtg
             num_voxels, voxels, sdf, iso, voxel_codes);
     }
 
+    /**
+     * @brief Launches stage 2: emit bipolar edge keys for the active voxels.
+     * @details Host wrapper over the edge emission kernel. Keys are emitted with duplicates;
+     * the caller sorts and uniques them to weld shared vertices.
+     * @param[in] num_active_voxels Number of active voxels.
+     * @param[in] voxels Device array of corner indices.
+     * @param[in] used_voxel_index Device array mapping compacted index to original index.
+     * @param[in] used_voxel_codes Device array of active sign codes.
+     * @param[out] active_edges Device array of emitted edge keys.
+     */
     void compute_active_edges(
         const uint32_t num_active_voxels,
         const uint32_t *voxels,
@@ -266,6 +398,15 @@ namespace mtg
             num_active_voxels, voxels, used_voxel_index, used_voxel_codes, active_edges);
     }
 
+    /**
+     * @brief Counts the voxels the surface crosses.
+     * @details Reduces the sign codes on device, treating any code other than all-inside or
+     * all-outside as active. The host needs this count before it can size the compacted arrays.
+     * @param[in] num_voxels Number of voxels.
+     * @param[in] voxel_codes Device array of per-voxel sign codes.
+     * @param[out] num_active_voxels Receives the active count.
+     * @note Synchronises to bring the count back to the host.
+     */
     void compute_number_active_voxels(
         const uint32_t num_voxels,
         uint8_t *voxel_codes,
@@ -289,6 +430,15 @@ namespace mtg
         CHECK_CUDA_INTERNAL(cudaFree(temp_buffer));
     }
 
+    /**
+     * @brief Compacts active voxels into dense arrays.
+     * @details Stream-compacts indices and codes so every later stage launches over active
+     * voxels only. This is what makes cost scale with surface area rather than volume.
+     * @param[in] num_voxels Number of voxels.
+     * @param[in] voxel_codes Device array of per-voxel sign codes.
+     * @param[out] used_voxel_index Device array mapping compacted index to original index.
+     * @param[out] used_voxel_code Device array of the active voxels' sign codes.
+     */
     void compact_active_voxels(
         const uint32_t num_voxels,
         const uint8_t *voxel_codes,
@@ -308,6 +458,14 @@ namespace mtg
             zip_in, zip_in + num_voxels, d_codes, zip_out, is_active_voxel());
     }
 
+    /**
+     * @brief Sorts and deduplicates the emitted edge keys.
+     * @details Device sort followed by a unique pass. Deduplication is what welds the mesh:
+     * an edge shared by several cells yields exactly one output vertex, so the result is
+     * watertight rather than a soup of disconnected patches.
+     * @return The number of unique edges.
+     * @note Synchronises to bring the unique count back to the host.
+     */
     Edge* compute_unique_active_edges(
         const uint32_t num_active_voxels,
         Edge *active_edges,
@@ -330,6 +488,14 @@ namespace mtg
         return unique_edges;
     }
 
+    /**
+     * @brief Launches stage 3: bind voxel-local edge slots to global vertex indices.
+     * @details Host wrapper over the edge-map kernel, run after deduplication so the binary
+     * search has a sorted key array to work against.
+     * @param[in] num_active_voxels Number of active voxels.
+     * @param[in] num_unique_edges Number of deduplicated edges.
+     * @param[out] voxel_edge_to_vert_idx Device array mapping local edge slots to vertices.
+     */
     void build_edge_map(
         const uint32_t num_active_voxels,
         const uint32_t num_unique_edges,
@@ -346,6 +512,13 @@ namespace mtg
             num_active_voxels, num_unique_edges, voxels, used_voxel_index, used_voxel_codes, unique_edges, voxel_edge_to_vert_idx);
     }
 
+    /**
+     * @brief Launches stage 4: place one vertex on each unique bipolar edge.
+     * @details Host wrapper sizing a 1D grid over the unique edges.
+     * @param[in] num_unique_edges Number of unique edges, one output vertex each.
+     * @param[in] iso Isolevel being extracted.
+     * @param[out] out_verts Device array of interpolated surface vertices.
+     */
     void interpolate_vertices(
         const uint32_t num_unique_edges,
         const Edge* unique_edges,
@@ -366,6 +539,17 @@ namespace mtg
             num_unique_edges, unique_edges, grid_vertices, values, grid_normals, grid_colors, iso, out_verts, out_normals, out_colors);
     }
 
+    /**
+     * @brief Counts output triangles and prefix-sums their per-voxel offsets.
+     * @details Each sign code implies a fixed triangle count, so an exclusive scan over the
+     * active voxels gives every voxel a disjoint output range. Assembly then writes without
+     * atomics or contention.
+     * @param[in] num_active_voxels Number of active voxels.
+     * @param[in] used_voxel_codes Device array of active sign codes.
+     * @param[out] num_triangles Receives the total triangle count.
+     * @param[out] voxel_triangle_prefix_sums Device array of per-voxel output offsets.
+     * @note Synchronises to bring the total back to the host.
+     */
     void compute_number_triangles(
         const uint32_t num_active_voxels,
         const uint8_t *used_voxel_codes,
@@ -381,7 +565,23 @@ namespace mtg
         thrust::exclusive_scan(num_tris_iter, num_tris_iter + num_active_voxels, d_prefix_sum);
     }
 
-    __global__ void assemble_triangles_kernel(
+/**
+ * @brief Writes the triangle index triples for every active voxel.
+ * @details Stage 5. One thread per active voxel. The sign code selects a row of the
+ * ::mtg_triTable / ::mtg_num_tris triangle table, whose voxel-local edge slots are translated into global vertex
+ * indices through the stage 3 map. Each voxel's output begins at a precomputed prefix-sum
+ * offset, so threads write to disjoint ranges without atomics or contention.
+ * @param[in] num_active_voxels Number of active voxels.
+ * @param[in] used_voxel_codes Device array of sign codes for the active voxels.
+ * @param[in] voxel_edge_to_vert_idx Device array mapping voxel-local edge slots to global
+ *     vertex indices.
+ * @param[in] voxel_triangle_prefix_sums Device array of per-voxel output offsets.
+ * @param[out] out_triangles Device array receiving triangle vertex index triples.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Winding follows the table, giving outward-facing normals for a field that is
+ * negative inside.
+ */
+__global__ void assemble_triangles_kernel(
         const uint32_t num_active_voxels,
         const uint8_t *used_voxel_codes,
         const uint32_t *voxel_edge_to_vert_idx,
@@ -423,6 +623,13 @@ namespace mtg
         }
     }
 
+    /**
+     * @brief Launches stage 5: write the triangle index triples.
+     * @details Host wrapper over the assembly kernel; each voxel writes into the disjoint
+     * range given by its prefix-sum offset.
+     * @param[in] num_active_voxels Number of active voxels.
+     * @param[out] out_triangles Device array of triangle vertex index triples.
+     */
     void assemble_triangles(
         const uint32_t num_active_voxels,
         const uint8_t *used_voxel_codes,
@@ -437,6 +644,15 @@ namespace mtg
             num_active_voxels, used_voxel_codes, voxel_edge_to_vert_idx, voxel_triangle_prefix_sums, out_triangles);
     }
 
+    /**
+     * @brief End-to-end grid Marching Tetrahedra isosurface extraction on the GPU.
+     * @details The host dispatcher orchestrating the whole pipeline: classify, compact, emit
+     * edges, deduplicate, map, interpolate, and assemble. Output buffers are allocated through
+     * PyTorch, so the extracted mesh needs no copy to be returned to Python.
+     * @return A tuple of vertices, triangles, and the optional interpolated attributes.
+     * @note Three device synchronisations are unavoidable -- after the active count, the unique
+     * edge count, and the triangle count -- because each sizes the next allocation.
+     */
     std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>> marching_tetrahedra_grid(
         const uint32_t num_voxels,
         const float3* __restrict__ grid_vertices,
@@ -540,7 +756,31 @@ namespace mtg
         return std::make_tuple(out_vertices, out_triangles, out_normals_opt, out_colors_opt, out_unique_edges_opt);
     }
 
-    __global__ void backward_kernel(
+/**
+ * @brief Backpropagates vertex gradients into the scalar field and colours.
+ * @details The analytical adjoint of stage 4. A vertex sits at
+ * $\mathbf{p} = \mathbf{p}_0 + t(\mathbf{p}_1 - \mathbf{p}_0)$ with
+ * $t = (\text{iso} - f_0) / (f_1 - f_0)$, so $\partial t / \partial f_0$ and
+ * $\partial t / \partial f_1$ are available in closed form and the chain rule gives the
+ * field gradient directly -- no finite differences, no autograd graph over the extraction
+ * itself. One thread per output vertex.
+ * @param[in] n_verts Number of output vertices.
+ * @param[in] unique_edges Device array of the edge keys that produced them.
+ * @param[in] grid_values Device array of scalar field values at grid vertices.
+ * @param[in] grid_coords Device array of grid vertex coordinates.
+ * @param[in] grid_colors Device array of per-vertex colours, or `nullptr`.
+ * @param[in] adj_verts Device array of incoming vertex position gradients.
+ * @param[in] adj_colors Device array of incoming colour gradients, or `nullptr`.
+ * @param[in] iso Isolevel used in the forward pass.
+ * @param[out] adj_values Device array accumulating scalar field gradients.
+ * @param[out] adj_grid_colors Device array accumulating colour gradients.
+ * @param[in] with_colors Whether colour gradients are propagated.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Grid vertices are shared between edges, so several threads accumulate into the
+ * same slot. Writes go through `atomicAdd`, which makes the reduction order
+ * nondeterministic and the result bitwise non-reproducible between runs.
+ */
+__global__ void backward_kernel(
         const uint32_t n_verts,
         const Edge *unique_edges,
         const float *grid_values,
@@ -609,6 +849,16 @@ namespace mtg
         atomicAdd(&adj_values[v1_idx], grad_v1);
     }
 
+    /**
+     * @brief Launches the analytical backward pass.
+     * @details Host wrapper over the adjoint kernel, which differentiates the edge interpolation
+     * in closed form.
+     * @param[in] n_verts Number of output vertices.
+     * @param[in] iso Isolevel used in the forward pass.
+     * @param[out] adj_values Device array accumulating scalar field gradients.
+     * @warning Accumulation into shared grid vertices is atomic, so results are not bitwise
+     * reproducible between runs.
+     */
     void backward(
         const uint32_t n_verts,
         const Edge *unique_edges,

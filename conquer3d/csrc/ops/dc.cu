@@ -26,6 +26,21 @@ namespace ops {
 
 namespace {
 
+/**
+ * @brief Gradient of the trilinear field inside a unit cell.
+ * @details Differentiates the trilinear interpolant analytically and divides by the cell
+ * spacing to return a world-space gradient. The direction is the surface normal wherever
+ * the field is a signed distance.
+ * @param[in] u Local coordinate along $x$, in $[0, 1]$.
+ * @param[in] v Local coordinate along $y$, in $[0, 1]$.
+ * @param[in] w Local coordinate along $z$, in $[0, 1]$.
+ * @param[in] s The cell's eight corner values.
+ * @return The field gradient.
+ * @param[in] dx Cell spacing along $x$.
+ * @param[in] dy Cell spacing along $y$.
+ * @param[in] dz Cell spacing along $z$.
+ * @note Supplies the QEF plane normals when the caller provides no explicit normal field.
+ */
 __device__ __forceinline__ float3 compute_trilinear_normal(
     float u, float v, float w,
     const float s[8],
@@ -49,6 +64,16 @@ __device__ __forceinline__ float3 compute_trilinear_normal(
 }
 
 // Compute minimum angle of a 3D triangle in radians
+/**
+ * @brief Smallest interior angle of a triangle.
+ * @details Used to choose between the two possible diagonals when splitting a quad: the
+ * split with the larger minimum angle produces better-conditioned triangles and avoids
+ * slivers.
+ * @param[in] p0 First vertex.
+ * @param[in] p1 Second vertex.
+ * @param[in] p2 Third vertex.
+ * @return The smallest interior angle in radians.
+ */
 __device__ __forceinline__ float triangle_min_angle(
     const float3 &p0, const float3 &p1, const float3 &p2
 ) {
@@ -78,6 +103,36 @@ __device__ __forceinline__ float triangle_min_angle(
 // -----------------------------------------------------------------------------------------
 // Kernel 1: Dual Vertex Generation via QEF
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Solves one dual vertex per active voxel by minimising a quadratic error function.
+ * @details The heart of Dual Contouring. One thread per voxel. Each bipolar edge
+ * contributes a plane through its crossing point with the local surface normal, and the
+ * vertex is placed at the point minimising $\sum_i (\mathbf{n}_i \cdot (\mathbf{v} -
+ * \mathbf{p}_i))^2$. Because the planes reconstruct the surface's own tangent structure,
+ * the minimiser lands exactly on creases and corners -- which is why Dual Contouring keeps
+ * mechanical CAD edges that vertex-on-edge methods round away.
+ *
+ * The normal matrix is diagonalised by cyclic Jacobi entirely in registers, and its
+ * pseudoinverse is truncated at a relative eigenvalue tolerance so that under-constrained
+ * cells fall back towards the cell centroid instead of shooting off along a null direction.
+ *
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] grid_normals Device array of per-vertex normals, or `nullptr` to derive them
+ *     from the trilinear field gradient.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] dual_vertices Device array of one solved vertex per voxel.
+ * @param[out] voxel_is_active Device array of per-voxel activity flags.
+ * @param[out] bipolar_edge_counts Device array of per-voxel bipolar edge counts.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note The solved vertex is clamped to the cell's bounding box, so a badly conditioned
+ * QEF can never place geometry outside the voxel that produced it.
+ * @warning The Jacobi solve is register resident. Raising the sweep count increases
+ * register pressure and can spill to local memory, which costs far more than the extra
+ * precision is worth.
+ */
 __global__ void compute_dual_vertices_kernel(
     const float3 *__restrict__ grid_vertices,
     const int *__restrict__ voxels,
@@ -165,6 +220,22 @@ __global__ void compute_dual_vertices_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 2: Emit Bipolar Edge Instances
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Emits a sortable key for every (voxel, bipolar edge) instance.
+ * @details One thread per voxel, writing a 64-bit key identifying the shared grid edge
+ * alongside the voxel and local edge that produced it. Sorting these keys groups the
+ * (up to four) voxels around each edge together, which is what lets the next stage build a
+ * dual face from an edge's incident cells without any neighbour lookup structure.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] edge_offsets Device array of per-voxel write offsets from the prefix sum.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] out_edge_keys Device array of 64-bit shared-edge keys.
+ * @param[out] out_voxel_and_edge Device array packing the source voxel and local edge.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Writes go to precomputed offsets, so this kernel needs no atomics.
+ */
 __global__ void emit_bipolar_edges_kernel(
     const int *__restrict__ voxels,
     const float *__restrict__ sdf,
@@ -201,6 +272,31 @@ __global__ void emit_bipolar_edges_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 3: Gather Dual Quads from Edge Incidences
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Builds one dual face from the voxels surrounding each shared edge.
+ * @details One thread per key instance, but only the thread at the start of each run of
+ * equal keys proceeds -- a lightweight way to elect one owner per unique edge without a
+ * separate compaction pass. That owner collects the dual vertices of the incident voxels
+ * and emits a quad, or a triangle where the edge lies on the domain boundary and only
+ * three cells exist. Winding is chosen from the sign of the edge so faces are consistently
+ * oriented.
+ * @param[in] sorted_edge_keys Device array of edge keys in ascending order.
+ * @param[in] sorted_voxel_and_edge Device array of packed voxel and local edge identifiers,
+ *     permuted alongside the keys.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] dual_vertices Device array of per-voxel solved vertices.
+ * @param[in] voxel_to_compact_idx Device array mapping voxel index to compacted vertex index.
+ * @param[in] total_instances Number of (voxel, edge) instances.
+ * @param[out] out_quads Device array receiving dual faces; a boundary triangle repeats its
+ *     last index.
+ * @param[in,out] out_quad_count Device counter, atomically incremented per face.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Requires @p sorted_edge_keys to be sorted, otherwise runs are not contiguous and
+ * faces are emitted several times or not at all.
+ * @warning The output slot is claimed with `atomicAdd`, so face ordering varies between
+ * runs. Geometry is unaffected, but a byte-identical mesh is not guaranteed.
+ */
 __global__ void gather_dual_quads_kernel(
     const uint64_t *__restrict__ sorted_edge_keys,
     const uint32_t *__restrict__ sorted_voxel_and_edge,
@@ -289,6 +385,21 @@ __global__ void gather_dual_quads_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 4: Optimal Quad-to-Triangle Splitting (Max-Min Angle Criterion)
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Splits dual quads into triangles along the shorter diagonal.
+ * @details One thread per quad. The diagonal is chosen by comparing the two candidate
+ * splits, which keeps the resulting triangles better conditioned than always cutting the
+ * same way. Faces already emitted as boundary triangles -- marked by a repeated final
+ * index -- are passed through unchanged.
+ * @param[in] quads Device array of dual faces.
+ * @param[in] compact_vertices Device array of compacted dual vertices.
+ * @param[in] num_quads Number of faces.
+ * @param[out] out_triangles Device array receiving triangle vertex index triples.
+ * @param[in,out] out_tri_count Device counter, atomically incremented per triangle.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The output slot is claimed with `atomicAdd`, so face ordering varies between
+ * runs. Geometry is unaffected, but a byte-identical mesh is not guaranteed.
+ */
 __global__ void quad_to_triangle_kernel(
     const int4 *__restrict__ quads,
     const float3 *__restrict__ compact_vertices,
@@ -331,6 +442,24 @@ __global__ void quad_to_triangle_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 5: Compact Dual Vertices & Feature Colors
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Compacts per-voxel dual vertices and colours into dense output arrays.
+ * @details One thread per voxel; inactive voxels exit immediately. Active ones copy their
+ * vertex to the slot given by the prefix-summed index map and, when colours are present,
+ * trilinearly interpolate the field colour at the dual vertex position. Writes target
+ * disjoint slots, so no atomics are required.
+ * @param[in] dual_vertices Device array of one solved vertex per voxel.
+ * @param[in] voxel_is_active Device array of per-voxel activity flags.
+ * @param[in] voxel_to_compact_idx Device array mapping voxel index to output slot.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] colors Device array of per-grid-vertex colours, or `nullptr`.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] num_voxels Number of voxels.
+ * @param[in] num_channels Colour channels per vertex.
+ * @param[out] compact_vertices Device array of dense output vertices.
+ * @param[out] compact_colors Device array of dense output colours.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void compact_dual_vertices_and_colors_kernel(
     const float3 *__restrict__ dual_vertices,
     const int *__restrict__ voxel_is_active,
@@ -393,6 +522,32 @@ __global__ void compact_dual_vertices_and_colors_kernel(
 // -----------------------------------------------------------------------------------------
 // Kernel 6: Analytical Differentiable Backward Kernel
 // -----------------------------------------------------------------------------------------
+/**
+ * @brief Backpropagates dual vertex gradients into the scalar field and colours.
+ * @details One thread per voxel. The incoming gradient on a dual vertex is redistributed
+ * across the bipolar edges that constrained its QEF, each contributing through the
+ * derivative of its crossing point with respect to the two corner values. Colour gradients
+ * follow the trilinear interpolation weights used in the forward pass.
+ * @param[in] grad_verts Device array of incoming dual vertex gradients.
+ * @param[in] grad_colors Device array of incoming colour gradients, or `nullptr`.
+ * @param[in] grid_vertices Device array of grid vertex coordinates.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] voxel_is_active Device array of per-voxel activity flags.
+ * @param[in] voxel_to_compact_idx Device array mapping voxel index to output slot.
+ * @param[in] iso Isolevel used in the forward pass.
+ * @param[in] num_voxels Number of voxels.
+ * @param[in] num_channels Colour channels per vertex.
+ * @param[out] grad_sdf Device array accumulating scalar field gradients.
+ * @param[out] grad_colors_in Device array accumulating colour gradients.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Grid vertices are shared between voxels, so accumulation goes through
+ * `atomicAdd` and the reduction order -- and hence the last bits of the result -- varies
+ * between runs.
+ * @warning This adjoint covers the QEF solution's dependence on the edge crossings, not
+ * the discrete choice of which voxels are active. Gradients are therefore undefined
+ * exactly at topology changes, where a voxel switches between active and inactive.
+ */
 __global__ void backward_dual_contouring_kernel(
     const float3 *__restrict__ grad_verts,
     const float *__restrict__ grad_colors,
@@ -454,6 +609,20 @@ __global__ void backward_dual_contouring_kernel(
     }
 }
 
+/**
+ * @brief Flags voxels the surface crosses and counts their bipolar edges.
+ * @details Cheap first pass. One thread per voxel: a voxel is active when its eight corner
+ * signs are not all equal, and the number of bipolar edges is recorded so the host can
+ * prefix-sum exact output offsets before any heavy work runs. Separating this from the QEF
+ * solve means the expensive stage only ever launches over active voxels.
+ * @param[in] voxels Device array of eight corner indices per voxel.
+ * @param[in] sdf Device array of scalar field values at grid vertices.
+ * @param[in] iso Isolevel separating inside from outside.
+ * @param[in] num_voxels Number of voxels.
+ * @param[out] voxel_is_active Device array of per-voxel activity flags.
+ * @param[out] bipolar_edge_counts Device array of per-voxel bipolar edge counts.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
 __global__ void detect_active_voxels_kernel(
     const int *__restrict__ voxels,
     const float *__restrict__ sdf,
