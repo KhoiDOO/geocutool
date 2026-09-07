@@ -1,0 +1,815 @@
+{
+  "meta": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "torch": "2.8.0+cu128",
+    "cuda": "12.8",
+    "python": "3.10.14",
+    "measured": "2026-09-07",
+    "warmup": 2,
+    "repeats": 7
+  },
+  "extraction": [
+    {
+      "algorithm": "Marching Cubes",
+      "res": 128,
+      "ms": 0.245,
+      "vertices": 26502,
+      "faces": 53000,
+      "faces_per_s": 216474975
+    },
+    {
+      "algorithm": "MC Asymptotic",
+      "res": 128,
+      "ms": 0.148,
+      "vertices": 26502,
+      "faces": 53000,
+      "faces_per_s": 356950435
+    },
+    {
+      "algorithm": "Dual Contouring",
+      "res": 128,
+      "ms": 0.196,
+      "vertices": 26504,
+      "faces": 53004,
+      "faces_per_s": 270031783
+    },
+    {
+      "algorithm": "Dual Marching Cubes",
+      "res": 128,
+      "ms": 0.178,
+      "vertices": 26504,
+      "faces": 53004,
+      "faces_per_s": 297909174
+    },
+    {
+      "algorithm": "DMC (pure quads)",
+      "res": 128,
+      "ms": 0.159,
+      "vertices": 26504,
+      "faces": 26502,
+      "faces_per_s": 167074346
+    },
+    {
+      "algorithm": "Marching Tetrahedra",
+      "res": 128,
+      "ms": 0.868,
+      "vertices": 93564,
+      "faces": 187124,
+      "faces_per_s": 215485314
+    },
+    {
+      "algorithm": "Marching Cubes",
+      "res": 256,
+      "ms": 0.415,
+      "vertices": 106468,
+      "faces": 212932,
+      "faces_per_s": 513079255
+    },
+    {
+      "algorithm": "MC Asymptotic",
+      "res": 256,
+      "ms": 0.213,
+      "vertices": 106468,
+      "faces": 212932,
+      "faces_per_s": 999718310
+    },
+    {
+      "algorithm": "Dual Contouring",
+      "res": 256,
+      "ms": 0.335,
+      "vertices": 106470,
+      "faces": 212936,
+      "faces_per_s": 634705281
+    },
+    {
+      "algorithm": "Dual Marching Cubes",
+      "res": 256,
+      "ms": 0.242,
+      "vertices": 106470,
+      "faces": 212936,
+      "faces_per_s": 880424737
+    },
+    {
+      "algorithm": "DMC (pure quads)",
+      "res": 256,
+      "ms": 0.223,
+      "vertices": 106470,
+      "faces": 106468,
+      "faces_per_s": 476460700
+    },
+    {
+      "algorithm": "Marching Tetrahedra",
+      "res": 256,
+      "ms": 2.635,
+      "vertices": 377162,
+      "faces": 754320,
+      "faces_per_s": 286299863
+    },
+    {
+      "algorithm": "Marching Cubes",
+      "res": 512,
+      "ms": 1.405,
+      "vertices": 426824,
+      "faces": 853644,
+      "faces_per_s": 607510093
+    },
+    {
+      "algorithm": "MC Asymptotic",
+      "res": 512,
+      "ms": 0.531,
+      "vertices": 426824,
+      "faces": 853644,
+      "faces_per_s": 1606236471
+    },
+    {
+      "algorithm": "Dual Contouring",
+      "res": 512,
+      "ms": 0.893,
+      "vertices": 426826,
+      "faces": 853648,
+      "faces_per_s": 956352634
+    },
+    {
+      "algorithm": "Dual Marching Cubes",
+      "res": 512,
+      "ms": 0.57,
+      "vertices": 426826,
+      "faces": 853648,
+      "faces_per_s": 1498343024
+    },
+    {
+      "algorithm": "DMC (pure quads)",
+      "res": 512,
+      "ms": 0.53,
+      "vertices": 426826,
+      "faces": 426824,
+      "faces_per_s": 804672439
+    },
+    {
+      "algorithm": "Marching Tetrahedra",
+      "res": 512,
+      "ms": 11.675,
+      "vertices": 1517704,
+      "faces": 3035404,
+      "faces_per_s": 259984467
+    },
+    {
+      "algorithm": "Marching Cubes",
+      "res": 1024,
+      "ms": 7.881,
+      "vertices": 1716382,
+      "faces": 3432760,
+      "faces_per_s": 435576377
+    },
+    {
+      "algorithm": "MC Asymptotic",
+      "res": 1024,
+      "ms": 2.709,
+      "vertices": 1716382,
+      "faces": 3432760,
+      "faces_per_s": 1266977857
+    },
+    {
+      "algorithm": "Dual Contouring",
+      "res": 1024,
+      "ms": 3.878,
+      "vertices": 1716384,
+      "faces": 3432764,
+      "faces_per_s": 885273302
+    },
+    {
+      "algorithm": "Dual Marching Cubes",
+      "res": 1024,
+      "ms": 2.62,
+      "vertices": 1716384,
+      "faces": 3432764,
+      "faces_per_s": 1310183252
+    },
+    {
+      "algorithm": "DMC (pure quads)",
+      "res": 1024,
+      "ms": 2.511,
+      "vertices": 1716384,
+      "faces": 1716382,
+      "faces_per_s": 683630126
+    },
+    {
+      "algorithm": "Marching Tetrahedra",
+      "res": 1024,
+      "ms": 44.558,
+      "vertices": 6113918,
+      "faces": 12227832,
+      "faces_per_s": 274423004
+    }
+  ],
+  "sign_modes": [
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 1000000,
+      "ms": 86.816,
+      "points_per_s": 11518648
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 1000000,
+      "ms": 83.773,
+      "points_per_s": 11936980
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 1000000,
+      "ms": 79.659,
+      "points_per_s": 12553527
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 1000000,
+      "ms": 79.485,
+      "points_per_s": 12581002
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 1000000,
+      "ms": 83.66,
+      "points_per_s": 11953175
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 1000000,
+      "ms": 79.78,
+      "points_per_s": 12534495
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 2000000,
+      "ms": 171.622,
+      "points_per_s": 11653513
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 2000000,
+      "ms": 163.903,
+      "points_per_s": 12202311
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 2000000,
+      "ms": 156.633,
+      "points_per_s": 12768727
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 2000000,
+      "ms": 156.641,
+      "points_per_s": 12768026
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 2000000,
+      "ms": 163.412,
+      "points_per_s": 12239003
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 2000000,
+      "ms": 156.622,
+      "points_per_s": 12769635
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 3000000,
+      "ms": 253.599,
+      "points_per_s": 11829713
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 3000000,
+      "ms": 245.088,
+      "points_per_s": 12240488
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 3000000,
+      "ms": 232.208,
+      "points_per_s": 12919429
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 3000000,
+      "ms": 231.712,
+      "points_per_s": 12947120
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 3000000,
+      "ms": 241.776,
+      "points_per_s": 12408162
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 3000000,
+      "ms": 232.182,
+      "points_per_s": 12920920
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 5000000,
+      "ms": 420.743,
+      "points_per_s": 11883740
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 5000000,
+      "ms": 402.828,
+      "points_per_s": 12412255
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 5000000,
+      "ms": 387.041,
+      "points_per_s": 12918518
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 5000000,
+      "ms": 386.014,
+      "points_per_s": 12952890
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 5000000,
+      "ms": 402.433,
+      "points_per_s": 12424425
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 5000000,
+      "ms": 386.2,
+      "points_per_s": 12946674
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 7000000,
+      "ms": 591.223,
+      "points_per_s": 11839861
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 7000000,
+      "ms": 570.304,
+      "points_per_s": 12274147
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 7000000,
+      "ms": 540.038,
+      "points_per_s": 12962047
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 7000000,
+      "ms": 539.19,
+      "points_per_s": 12982438
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 7000000,
+      "ms": 565.369,
+      "points_per_s": 12381297
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 7000000,
+      "ms": 539.089,
+      "points_per_s": 12984872
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 11000000,
+      "ms": 928.106,
+      "points_per_s": 11852092
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 11000000,
+      "ms": 881.4,
+      "points_per_s": 12480148
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 11000000,
+      "ms": 847.669,
+      "points_per_s": 12976759
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 11000000,
+      "ms": 846.447,
+      "points_per_s": 12995503
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 11000000,
+      "ms": 895.349,
+      "points_per_s": 12285715
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 11000000,
+      "ms": 846.911,
+      "points_per_s": 12988375
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 13000000,
+      "ms": 1095.585,
+      "points_per_s": 11865809
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 13000000,
+      "ms": 1056.346,
+      "points_per_s": 12306572
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 13000000,
+      "ms": 1000.251,
+      "points_per_s": 12996732
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 13000000,
+      "ms": 999.246,
+      "points_per_s": 13009811
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 13000000,
+      "ms": 1055.858,
+      "points_per_s": 12312262
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 13000000,
+      "ms": 999.181,
+      "points_per_s": 13010651
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 17000000,
+      "ms": 1431.93,
+      "points_per_s": 11872090
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 17000000,
+      "ms": 1380.901,
+      "points_per_s": 12310806
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 17000000,
+      "ms": 1307.161,
+      "points_per_s": 13005288
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 17000000,
+      "ms": 1305.557,
+      "points_per_s": 13021262
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 17000000,
+      "ms": 1359.274,
+      "points_per_s": 12506677
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 17000000,
+      "ms": 1305.823,
+      "points_per_s": 13018607
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 19000000,
+      "ms": 1603.378,
+      "points_per_s": 11849984
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 19000000,
+      "ms": 1552.253,
+      "points_per_s": 12240273
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 19000000,
+      "ms": 1470.224,
+      "points_per_s": 12923204
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 19000000,
+      "ms": 1468.606,
+      "points_per_s": 12937434
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 19000000,
+      "ms": 1552.917,
+      "points_per_s": 12235042
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 19000000,
+      "ms": 1468.371,
+      "points_per_s": 12939509
+    },
+    {
+      "mode": 0,
+      "name": "Ray parity",
+      "points": 23000000,
+      "ms": 1948.105,
+      "points_per_s": 11806345
+    },
+    {
+      "mode": 1,
+      "name": "Pseudonormal",
+      "points": 23000000,
+      "ms": 1863.201,
+      "points_per_s": 12344348
+    },
+    {
+      "mode": 2,
+      "name": "Winding number",
+      "points": 23000000,
+      "ms": 1778.447,
+      "points_per_s": 12932629
+    },
+    {
+      "mode": 3,
+      "name": "Flood fill",
+      "points": 23000000,
+      "ms": 1776.55,
+      "points_per_s": 12946441
+    },
+    {
+      "mode": 4,
+      "name": "Hybrid consensus",
+      "points": 23000000,
+      "ms": 1878.945,
+      "points_per_s": 12240908
+    },
+    {
+      "mode": 5,
+      "name": "Coarse-fine fill",
+      "points": 23000000,
+      "ms": 1776.427,
+      "points_per_s": 12947336
+    }
+  ],
+  "distances": [
+    {
+      "metric": "One-sided Chamfer",
+      "points": 100000,
+      "ms": 2.009,
+      "points_per_s": 49773826
+    },
+    {
+      "metric": "Chamfer",
+      "points": 100000,
+      "ms": 3.592,
+      "points_per_s": 27838156
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 100000,
+      "ms": 1.818,
+      "points_per_s": 54996305
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 100000,
+      "ms": 3.602,
+      "points_per_s": 27764697
+    },
+    {
+      "metric": "One-sided Chamfer",
+      "points": 250000,
+      "ms": 3.39,
+      "points_per_s": 73744572
+    },
+    {
+      "metric": "Chamfer",
+      "points": 250000,
+      "ms": 6.652,
+      "points_per_s": 37583223
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 250000,
+      "ms": 3.332,
+      "points_per_s": 75027848
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 250000,
+      "ms": 6.662,
+      "points_per_s": 37528881
+    },
+    {
+      "metric": "One-sided Chamfer",
+      "points": 500000,
+      "ms": 6.017,
+      "points_per_s": 83097557
+    },
+    {
+      "metric": "Chamfer",
+      "points": 500000,
+      "ms": 12.063,
+      "points_per_s": 41447713
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 500000,
+      "ms": 6.01,
+      "points_per_s": 83196665
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 500000,
+      "ms": 12.036,
+      "points_per_s": 41541710
+    },
+    {
+      "metric": "One-sided Chamfer",
+      "points": 1000000,
+      "ms": 11.637,
+      "points_per_s": 85933095
+    },
+    {
+      "metric": "Chamfer",
+      "points": 1000000,
+      "ms": 23.213,
+      "points_per_s": 43079324
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 1000000,
+      "ms": 11.632,
+      "points_per_s": 85973051
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 1000000,
+      "ms": 23.23,
+      "points_per_s": 43047338
+    },
+    {
+      "metric": "One-sided Chamfer",
+      "points": 2000000,
+      "ms": 33.941,
+      "points_per_s": 58925130
+    },
+    {
+      "metric": "Chamfer",
+      "points": 2000000,
+      "ms": 68.01,
+      "points_per_s": 29407280
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 2000000,
+      "ms": 34.051,
+      "points_per_s": 58735303
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 2000000,
+      "ms": 68.118,
+      "points_per_s": 29360737
+    },
+    {
+      "metric": "One-sided Chamfer",
+      "points": 4000000,
+      "ms": 92.8,
+      "points_per_s": 43103446
+    },
+    {
+      "metric": "Chamfer",
+      "points": 4000000,
+      "ms": 186.128,
+      "points_per_s": 21490572
+    },
+    {
+      "metric": "One-sided Hausdorff",
+      "points": 4000000,
+      "ms": 92.817,
+      "points_per_s": 43095393
+    },
+    {
+      "metric": "Hausdorff",
+      "points": 4000000,
+      "ms": 186.092,
+      "points_per_s": 21494752
+    }
+  ],
+  "pipeline": [
+    {
+      "res": 128,
+      "grid_ms": 4.164,
+      "fill_ms": 3.604,
+      "sdf_ms": 0.295,
+      "cells": 79472,
+      "grid_vertices": 105822,
+      "dense_cells": 2097152,
+      "sparsity": 3.7895
+    },
+    {
+      "res": 256,
+      "grid_ms": 5.227,
+      "fill_ms": 9.097,
+      "sdf_ms": 0.31,
+      "cells": 319357,
+      "grid_vertices": 425612,
+      "dense_cells": 16777216,
+      "sparsity": 1.9035
+    },
+    {
+      "res": 512,
+      "grid_ms": 14.961,
+      "fill_ms": 34.389,
+      "sdf_ms": 0.631,
+      "cells": 1280303,
+      "grid_vertices": 1706688,
+      "dense_cells": 134217728,
+      "sparsity": 0.9539
+    },
+    {
+      "res": 1024,
+      "grid_ms": 66.643,
+      "fill_ms": 799.739,
+      "sdf_ms": 1.834,
+      "cells": 5148906,
+      "grid_vertices": 6864332,
+      "dense_cells": 1073741824,
+      "sparsity": 0.4795
+    }
+  ]
+}
