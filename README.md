@@ -36,7 +36,7 @@
 
 ## 🌟 Overview
 
-**Conquer3D** is an ultra-fast, GPU-native computational geometry and differentiable spatial computing library engineered in **PyTorch and CUDA**. Designed from the ground up for 3D computer vision, generative AI, neural surface reconstruction, and differentiable rendering, **Conquer3D** delivers up to **~1.0 Billion faces/second** isosurface extraction, exact CAD sharp crease preservation, and memory-efficient spatial acceleration structures.
+**Conquer3D** is an ultra-fast, GPU-native computational geometry and differentiable spatial computing library engineered in **PyTorch and CUDA**. Designed from the ground up for 3D computer vision, generative AI, neural surface reconstruction, and differentiable rendering, **Conquer3D** delivers up to **~1.3 Billion faces/second** isosurface extraction, exact CAD sharp crease preservation, and memory-efficient spatial acceleration structures.
 
 Every operator consumes and produces PyTorch tensors **in place** — no host round-trip, no format conversion — so meshing a field is an operation *inside* a training step rather than a preprocessing stage around it.
 
@@ -89,14 +89,18 @@ The API reference does not stop at the Python surface. It descends through the p
 
 ## ⚡ Benchmarks
 
-*Empirical extraction performance on **NVIDIA GeForce RTX 4090** on the **Fandisk CAD model** at **$1024^3$ resolution** (6.86M sparse vertices, 5.15M active voxels):*
+*Measured on **NVIDIA GeForce RTX 4090** (torch 2.8.0+cu128, CUDA 12.8) on the **Fandisk CAD model** at **$1024^3$ resolution** (5.15M active cells). Timed with CUDA events around the operator alone, median of 7 runs after 2 warm-ups:*
 
-| Algorithm | Mesh Output | Extracted Vertices | Extracted Faces / Quads | Latency (ms) | Throughput | Watertight |
-| :--- | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Dual Marching Cubes (DMC)** | Triangles | **1,716,386** | **3,432,768** | **3.44 ms** | **~1.0B faces/s** | **Yes** |
-| **Dual Marching Cubes (DMC)** | Pure Quads | **1,716,386** | **1,716,384** | **3.22 ms** | **533M quads/s** | **Yes** |
-| **Dual Contouring (DC + Normals)** | Triangles | 1,716,386 | 3,432,768 | **4.79 ms** | **717M faces/s** | **Yes** |
-| **Marching Cubes Asymptotic (MCA)** | Triangles | 1,716,384 | 3,432,764 | 16.42 ms | **209M faces/s** | **Yes** |
+| Algorithm | Mesh Output | Extracted Vertices | Extracted Faces / Quads | Latency (ms) | Throughput |
+| :--- | :--- | ---: | ---: | ---: | ---: |
+| **DMC (pure quads)** | Pure Quads | 1,716,384 | 1,716,382 | **2.51 ms** | **684M faces/s** |
+| **Dual Marching Cubes** | Triangles | 1,716,384 | 3,432,764 | **2.62 ms** | **1,311M faces/s** |
+| MC Asymptotic | Triangles | 1,716,382 | 3,432,760 | 2.71 ms | 1,267M faces/s |
+| Dual Contouring | Triangles | 1,716,384 | 3,432,764 | 3.88 ms | 884M faces/s |
+| Marching Cubes | Triangles | 1,716,382 | 3,432,760 | 7.90 ms | 434M faces/s |
+| Marching Tetrahedra | Triangles | 6,113,918 | 12,227,832 | 44.90 ms | 272M faces/s |
+
+All figures are produced by `docs/_figures/make_benchmarks.py` and can be reproduced. Sign-mode costs, pipeline setup breakdown and memory scaling are on the **[benchmarks page](https://khoidoo.github.io/conquer3d/benchmarks.html)**.
 
 ---
 
@@ -106,7 +110,7 @@ The API reference does not stop at the Python surface. It descends through the p
 <summary><b>🔷 1. Isosurface Extraction &amp; Meshing</b></summary>
 <br>
 
-- **Dual Marching Cubes (`dmc`)**: High-throughput manifold surface extraction with pure quad $(Q, 4)$ or triangle $(F, 3)$ outputs (~1.0B faces/s).
+- **Dual Marching Cubes (`dmc`)**: High-throughput manifold surface extraction with pure quad $(Q, 4)$ or triangle $(F, 3)$ outputs (~1.3B faces/s measured).
 - **Dual Contouring (`dc`)**: Sharp CAD crease and mechanical corner preservation via GPU Quadratic Error Function (QEF) solving.
 - **Marching Cubes Asymptotic (`mca`)**: Decider-enhanced Marching Cubes resolving topological face ambiguities on-the-fly.
 - **Differentiable Poisson Surface Reconstruction (`dpsr`, `DPSR`)**: Differentiable spectral Fourier Poisson indicator field solving directly from oriented point clouds.
