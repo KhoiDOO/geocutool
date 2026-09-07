@@ -18,6 +18,19 @@
 namespace pgs_aabb
 {
     // Fast Broad-Phase Collision (No 12-edge loops!)
+    /**
+     * @brief Tests whether a periodic Gaussian's support meets a voxel.
+     * @details Begins with an AABB rejection, then accounts for the splat's orientation: a
+     * periodic Gaussian's support is a slab about its normal, not an ellipsoid, so a plain
+     * ellipsoid test would accept regions the splat does not actually occupy.
+     * @param[in] mean Gaussian centre.
+     * @param[in] normal Orientation vector.
+     * @param[in] gs_ab_min Gaussian AABB lower bound.
+     * @param[in] gs_ab_max Gaussian AABB upper bound.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @return True if the support meets the voxel.
+     */
     __device__ __forceinline__ bool test_pgs_intersect_voxel(
         const float3 &mean,
         const float3 &normal,
@@ -54,6 +67,22 @@ namespace pgs_aabb
         return false; // Voxel is entirely above or below the flat plane
     }
 
+    /**
+     * @brief Computes the centroid of a periodic Gaussian's occupancy within a voxel.
+     * @details Samples the voxel and averages the positions whose density clears the isovalue,
+     * giving a representative point for the intersection. Returns false when no sample
+     * qualifies, meaning the overlap is empty despite the bounds suggesting otherwise.
+     * @param[in] mean Gaussian centre.
+     * @param[in] normal Orientation vector.
+     * @param[in] covi Six upper-triangular entries of the inverse covariance.
+     * @param[in] iso Isovalue defining the surface.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @param[in] return_centroids Whether the centroid is written.
+     * @param[out] out_centroid Centroid of the occupied region.
+     * @return True if any sample qualified.
+     * @note Sampling is discrete, so a support far thinner than the voxel may be missed.
+     */
     __device__ __forceinline__ bool compute_pgs_voxel_centroid(
         const float3 &mean,
         const float3 &normal,
@@ -124,7 +153,43 @@ namespace pgs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void query_pgs_voxel_pair_intersection_bvh_kernel(
+/**
+ * @brief Reports every (voxel, periodic Gaussian) pair whose supports overlap.
+ * @details The periodic counterpart of the 3DGS voxel query. One thread per voxel; leaves
+ * surviving the AABB test are checked against the oriented, normal-aware support of a
+ * periodic Gaussian rather than a plain ellipsoid.
+ * @param[in] num_voxels Number of voxels $V$.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] vx_aabb_mins Device array of $V$ voxel lower bounds.
+ * @param[in] vx_aabb_maxs Device array of $V$ voxel upper bounds.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to Gaussian indices.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] normals Device array of $N$ orientation vectors.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] gs_aabb_mins Device array of $N$ Gaussian AABB lower bounds.
+ * @param[in] gs_aabb_maxs Device array of $N$ Gaussian AABB upper bounds.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues.
+ * @param[in] iso Uniform isovalue fallback.
+ * @param[in] return_centroids Whether to emit per-pair centroids.
+ * @param[in] return_centroid_densities Whether to emit per-pair densities.
+ * @param[out] hit_mask Device array of $V$ flags marking voxels with any hit.
+ * @param[out] out_voxel_ids Device array receiving the voxel index of each pair.
+ * @param[out] out_gaus_ids Device array receiving the Gaussian index of each pair.
+ * @param[out] centroids Device array of per-pair centroids, when requested.
+ * @param[out] densities Device array of per-pair densities, when requested.
+ * @param[in,out] global_counter Device counter, atomically incremented per pair.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ * @warning Output slots are claimed atomically, so pair ordering varies between runs.
+ * Emission stops at @p max_capacity; compare the final counter against it to detect
+ * truncation.
+ */
+__global__ void query_pgs_voxel_pair_intersection_bvh_kernel(
         const uint32_t num_voxels,
         const uint32_t num_gaussians,
         const float3 *__restrict__ vx_aabb_mins,
@@ -314,7 +379,32 @@ namespace pgs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void query_pgs_edge_intersection_bvh_kernel(
+/**
+ * @brief Finds the first periodic Gaussian each edge intersects.
+ * @details One thread per edge, writing a single result per edge at a fixed slot, so no
+ * atomics are required. The exact test accounts for the Gaussian's orientation, which a
+ * plain ellipsoid test would ignore.
+ * @param[in] num_edges Number of edges $E$.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] edge_starts Device array of $E$ segment start points.
+ * @param[in] edge_ends Device array of $E$ segment end points.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to Gaussian indices.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] normals Device array of $N$ orientation vectors.
+ * @param[in] opacities Device array of $N$ opacities.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues.
+ * @param[in] iso Uniform isovalue fallback.
+ * @param[out] hit_mask Device array of $E$ flags marking intersected edges.
+ * @param[out] out_gaus_ids Device array of $E$ Gaussian indices, $-1$ where none.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void query_pgs_edge_intersection_bvh_kernel(
         const uint32_t num_edges,
         const uint32_t num_gaussians,
         const float3 *__restrict__ edge_starts,

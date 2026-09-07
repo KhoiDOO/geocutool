@@ -28,14 +28,34 @@ struct Edge {
         v1 = a > b ? a : b;
     }
 
+    /**
+     * @brief Equality comparison.
+     * @details Edge keys are stored with endpoints sorted, so two edges compare equal
+     * regardless of the traversal direction that produced them -- which is what lets a shared
+     * edge deduplicate across the triangles meeting at it.
+     * @param[in] other Edge to compare against.
+     * @return True if both endpoints match.
+     */
     __host__ __device__ bool operator==(const Edge& other) const {
         return v0 == other.v0 && v1 == other.v1;
     }
 
+    /**
+     * @brief Inequality comparison.
+     * @param[in] other Edge to compare against.
+     * @return True if the endpoints differ.
+     */
     __host__ __device__ bool operator!=(const Edge& other) const {
         return v0 != other.v0 || v1 != other.v1;
     }
 
+    /**
+     * @brief Lexicographic ordering by endpoint indices.
+     * @details Provides the strict weak ordering the device sort requires, so equal keys form
+     * contiguous runs and can be uniqued in a single pass.
+     * @param[in] other Edge to compare against.
+     * @return True if this edge orders before @p other.
+     */
     __host__ __device__ bool operator<(const Edge& other) const {
         if (v0 != other.v0) return v0 < other.v0;
         return v1 < other.v1;

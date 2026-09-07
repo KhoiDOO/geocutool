@@ -17,7 +17,28 @@
 
 namespace pgs
 {
-    __global__ void solve_pgs_cluster_tangency_radius_kernel(
+/**
+ * @brief Solves the tangency radius of each periodic Gaussian against its neighbours.
+ * @details One thread per Gaussian. Periodic Gaussians carry an orientation as well as a
+ * covariance, so the support radius is the point at which a splat becomes tangent to its
+ * neighbours along the normal direction rather than a plain Mahalanobis cutoff. Gaussians
+ * whose configuration admits no valid tangency -- degenerate or fully enclosed by a
+ * neighbour -- are reported through @p invalid_mask instead of receiving a fabricated
+ * radius.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] normals Device array of $N$ orientation vectors.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] tree_points Device array of centres in KD-tree order.
+ * @param[in] tree_inds Device array of permutation indices back to original order.
+ * @param[in] k Number of neighbours to consider; must not exceed `MAX_K`.
+ * @param[out] isos Device array of $N$ tangency radii.
+ * @param[out] invalid_mask Device array of $N$ flags marking unsolvable Gaussians.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Entries flagged in @p invalid_mask leave the matching @p isos value
+ * unspecified; filter on the mask before use.
+ */
+__global__ void solve_pgs_cluster_tangency_radius_kernel(
         const uint32_t num_gaussians,
         const float3 *__restrict__ means,
         const float3 *__restrict__ normals,

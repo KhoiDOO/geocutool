@@ -16,6 +16,23 @@
 
 namespace gs_aabb
 {
+    /**
+     * @brief Closed-form AABB of one Gaussian's isosurface.
+     * @details Bounds the ellipsoid $\{x : (x - \mu)^\top \Sigma^{-1} (x - \mu) = \text{iso}\}$
+     * exactly, rather than falling back to a scale-derived sphere, which would be far looser
+     * and would put many more false candidates through later broad-phase tests. Scales are
+     * clamped to a fraction of the voxel size so a degenerate splat cannot produce an
+     * ill-conditioned bound.
+     * @param[in] mean Gaussian centre.
+     * @param[in] scale Per-axis scale.
+     * @param[in] covi Six upper-triangular entries of the inverse covariance.
+     * @param[in] iso Isovalue defining the surface.
+     * @param[in] tol Minimum scale as a fraction of the voxel size.
+     * @param[in] level Octree level setting the reference voxel size.
+     * @param[out] out_min AABB lower bound.
+     * @param[out] out_max AABB upper bound.
+     * @param[out] contact_points Representative surface points, or `nullptr`.
+     */
     __device__ __forceinline__ void compute_gs_single_aabb(
         const float3 &mean,
         const float3 &scale,
@@ -93,7 +110,28 @@ namespace gs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void compute_gs_aabb_kernel(
+/**
+ * @brief Computes a tight AABB and contact point for each Gaussian at its isovalue.
+ * @details One thread per Gaussian. The bounding box of an ellipsoidal isosurface is
+ * obtained in closed form from the inverse covariance, giving a far tighter fit than a
+ * scale-derived sphere and so far fewer false positives in later broad-phase queries.
+ * Isovalues may be uniform or per-Gaussian, selected at compile time by the
+ * `multiple_isos` template parameter to keep the branch out of the inner loop.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] scales Device array of $N$ per-axis scales.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues, used when `multiple_isos`.
+ * @param[in] iso Uniform isovalue, used otherwise.
+ * @param[in] tol Minimum scale as a fraction of the voxel size.
+ * @param[in] level Octree level setting the reference voxel size.
+ * @param[out] aabb_min Device array of $N$ AABB lower bounds.
+ * @param[out] aabb_max Device array of $N$ AABB upper bounds.
+ * @param[out] contact_points Device array of $N$ representative surface points.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Templated on `multiple_isos`; the host instantiates the variant it needs.
+ */
+__global__ void compute_gs_aabb_kernel(
         const uint32_t num_gaussians,
         const float3 *__restrict__ means,
         const float3 *__restrict__ scales,
@@ -174,6 +212,19 @@ namespace gs_aabb
         }
     }
 
+    /**
+     * @brief Tests whether a Gaussian's isosurface crosses any edge of a voxel.
+     * @details Works in the Gaussian's local frame, where the ellipsoid becomes a unit sphere
+     * and the test reduces to a quadratic along each edge. One of the three cases making up the
+     * full voxel test.
+     * @param[in] mean Gaussian centre.
+     * @param[in] covi Six upper-triangular entries of the inverse covariance.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @param[in] iso Isovalue defining the surface.
+     * @return True if the surface crosses an edge.
+     * @note Assumes a cubic voxel.
+     */
     __device__ __forceinline__ bool test_gs_intersect_voxel_edge(
         const float3 &mean,
         const float *covi,
@@ -221,6 +272,19 @@ namespace gs_aabb
         return false;
     }
 
+    /**
+     * @brief Tests one face of a voxel against a Gaussian in its local frame.
+     * @details Helper of test_gs_intersect_voxel_face(), solving for the parameter at which
+     * the face plane meets the transformed surface and checking the hit lies within the face.
+     * @param[in] p Voxel corner in the Gaussian's local frame.
+     * @param[in,out] q Working vector for the face solve.
+     * @param[in] vsize Voxel edge length.
+     * @param[in] i Axis index of the face normal.
+     * @param[in] j First in-plane axis index.
+     * @param[in] k Second in-plane axis index.
+     * @param[in] vs Face offset along the normal axis.
+     * @return True if the face intersects the surface.
+     */
     __device__ __forceinline__ bool test_gs_vx_face(
         const float *p,
         float *q,
@@ -244,6 +308,19 @@ namespace gs_aabb
         return false;
     }
 
+    /**
+     * @brief Tests whether a Gaussian's isosurface crosses any face of a voxel.
+     * @details Covers the case where the surface passes through a face interior without
+     * touching an edge, which the edge test alone would miss.
+     * @param[in] mean Gaussian centre.
+     * @param[in] cp0 First contact point.
+     * @param[in] cp1 Second contact point.
+     * @param[in] cp2 Third contact point.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @return True if the surface crosses a face.
+     * @note Assumes a cubic voxel.
+     */
     __device__ __forceinline__ bool test_gs_intersect_voxel_face(
         const float3 &mean,
         float3 cp0,
@@ -269,6 +346,23 @@ namespace gs_aabb
         return (b[0] || b[1] || b[2] || b[3] || b[4] || b[5]);
     }
 
+    /**
+     * @brief Full test of a Gaussian's isosurface against a voxel.
+     * @details Ordered cheapest first: containment either way, then AABB overlap, then the
+     * exact edge and face tests. Most candidate pairs are settled by the first two steps, so
+     * the expensive geometry runs only where it can change the answer.
+     * @param[in] gaus_idx Gaussian index, for diagnostics.
+     * @param[in] mean Gaussian centre.
+     * @param[in] covi Six upper-triangular entries of the inverse covariance.
+     * @param[in] gs_ab_min Gaussian AABB lower bound.
+     * @param[in] gs_ab_max Gaussian AABB upper bound.
+     * @param[in] cp0 First contact point.
+     * @param[in] cp1 Second contact point.
+     * @param[in] cp2 Third contact point.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @return True if the Gaussian's isosurface meets the voxel.
+     */
     __device__ __forceinline__ bool test_gs_intersect_voxel(
         const uint64_t gaus_idx,
         const float3 &mean,
@@ -295,6 +389,22 @@ namespace gs_aabb
         return test_gs_intersect_voxel_edge(mean, covi, vx_ab_min, vx_ab_max, iso);
     }
 
+    /**
+     * @brief Computes the centroid and density of a Gaussian-voxel overlap region.
+     * @details Intersects the two boxes and evaluates the Gaussian's density over the shared
+     * volume, giving the weight used to decide whether the pair contributes meaningfully or
+     * should be discarded.
+     * @param[in] gs_ab_min Gaussian AABB lower bound.
+     * @param[in] gs_ab_max Gaussian AABB upper bound.
+     * @param[in] vx_ab_min Voxel lower bound.
+     * @param[in] vx_ab_max Voxel upper bound.
+     * @param[in] mean Gaussian centre.
+     * @param[in] covi Six upper-triangular entries of the inverse covariance.
+     * @param[in] opacity Gaussian opacity.
+     * @param[in] return_centroids Whether the centroid is written.
+     * @param[out] out_centroid Centroid of the overlap region.
+     * @param[out] out_density Density integrated over the overlap.
+     */
     __device__ __forceinline__ void compute_overlap_metrics(
         const float3 &gs_ab_min,
         const float3 &gs_ab_max,
@@ -337,7 +447,47 @@ namespace gs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void query_gs_voxel_pair_intersection_bvh_kernel(
+/**
+ * @brief Reports every (voxel, Gaussian) pair whose supports overlap.
+ * @details One thread per voxel, descending the Gaussian BVH with a private stack. Leaves
+ * surviving the AABB test are re-examined exactly: the Gaussian's density is evaluated
+ * inside the voxel and the pair is kept only if it clears both the aspect-ratio and
+ * density thresholds, which discards the many boxes that touch a voxel without
+ * contributing meaningful mass.
+ * @param[in] num_voxels Number of voxels $V$.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] vx_aabb_mins Device array of $V$ voxel lower bounds.
+ * @param[in] vx_aabb_maxs Device array of $V$ voxel upper bounds.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to Gaussian indices.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] opacities Device array of $N$ opacities.
+ * @param[in] gs_aabb_mins Device array of $N$ Gaussian AABB lower bounds.
+ * @param[in] gs_aabb_maxs Device array of $N$ Gaussian AABB upper bounds.
+ * @param[in] contact_points Device array of $N$ representative surface points.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues.
+ * @param[in] iso Uniform isovalue fallback.
+ * @param[in] ar_threshold Aspect-ratio rejection threshold.
+ * @param[in] p_threshold Density rejection threshold.
+ * @param[in] return_centroids Whether to emit centroids and densities.
+ * @param[out] hit_mask Device array of $V$ flags marking voxels with any hit.
+ * @param[out] out_voxel_ids Device array receiving the voxel index of each pair.
+ * @param[out] out_gaus_ids Device array receiving the Gaussian index of each pair.
+ * @param[out] centroids Device array of per-pair centroids, when requested.
+ * @param[out] densities Device array of per-pair densities, when requested.
+ * @param[in,out] global_counter Device counter, atomically incremented per pair.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ * @warning Output slots are claimed atomically, so pair ordering varies between runs.
+ * Emission stops at @p max_capacity; compare the final counter against it to detect
+ * truncation.
+ */
+__global__ void query_gs_voxel_pair_intersection_bvh_kernel(
         const uint32_t num_voxels,
         const uint32_t num_gaussians,
         const float3 *__restrict__ vx_aabb_mins,
@@ -558,7 +708,37 @@ namespace gs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void query_gs_edge_pair_intersection_bvh_kernel(
+/**
+ * @brief Reports every (edge, Gaussian) pair whose supports intersect.
+ * @details One thread per edge. A broad-phase AABB around the segment prunes the BVH,
+ * then surviving Gaussians receive an exact segment-versus-ellipsoid test. Used to decide
+ * which splats a grid edge passes through when building sparse structures over a splat
+ * cloud.
+ * @param[in] num_edges Number of edges $E$.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] edge_starts Device array of $E$ segment start points.
+ * @param[in] edge_ends Device array of $E$ segment end points.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to Gaussian indices.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues.
+ * @param[in] iso Uniform isovalue fallback.
+ * @param[out] hit_mask Device array of $E$ flags marking edges with any hit.
+ * @param[out] out_edge_ids Device array receiving the edge index of each pair.
+ * @param[out] out_gaus_ids Device array receiving the Gaussian index of each pair.
+ * @param[in,out] global_counter Device counter, atomically incremented per pair.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ * @warning Output slots are claimed atomically, so pair ordering varies between runs.
+ * Emission stops at @p max_capacity; compare the final counter against it to detect
+ * truncation.
+ */
+__global__ void query_gs_edge_pair_intersection_bvh_kernel(
         const uint32_t num_edges,
         const uint32_t num_gaussians,
         const float3 *__restrict__ edge_starts,
@@ -712,7 +892,34 @@ namespace gs_aabb
     }
 
     template <bool multiple_isos>
-    __global__ void query_gs_edge_intersection_bvh_kernel(
+/**
+ * @brief Finds the first Gaussian each edge intersects.
+ * @details One thread per edge. Unlike the pair-emitting variant this kernel records a
+ * single Gaussian per edge at a fixed output slot, so it needs no atomic counter and its
+ * result is deterministic. Suited to occlusion and visibility tests where only the
+ * existence of a blocker matters.
+ * @param[in] num_edges Number of edges $E$.
+ * @param[in] num_gaussians Number of Gaussians $N$.
+ * @param[in] edge_starts Device array of $E$ segment start points.
+ * @param[in] edge_ends Device array of $E$ segment end points.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to Gaussian indices.
+ * @param[in] means Device array of $N$ Gaussian centres.
+ * @param[in] opacities Device array of $N$ opacities.
+ * @param[in] covis Device array of $6N$ inverse covariance entries.
+ * @param[in] isos Device array of $N$ per-Gaussian isovalues.
+ * @param[in] iso Uniform isovalue fallback.
+ * @param[out] hit_mask Device array of $E$ flags marking intersected edges.
+ * @param[out] out_gaus_ids Device array of $E$ Gaussian indices, $-1$ where none.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Reports the first qualifying Gaussian encountered, which is not necessarily the
+ * nearest along the segment.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void query_gs_edge_intersection_bvh_kernel(
         const uint32_t num_edges,
         const uint32_t num_gaussians,
         const float3 *__restrict__ edge_starts,
