@@ -235,3 +235,56 @@ class Renderer:
                 )
             )
         return out
+
+
+# --------------------------------------------------------------------------- #
+# Voxel geometry
+# --------------------------------------------------------------------------- #
+
+# Corner offsets of a unit cube, ordered so the face table below winds outward.
+_CUBE_CORNERS = torch.tensor(
+    [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+     [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=torch.float32
+) * 0.5
+
+_CUBE_FACES = torch.tensor(
+    [[0, 3, 2], [0, 2, 1],   # -Z
+     [4, 5, 6], [4, 6, 7],   # +Z
+     [0, 1, 5], [0, 5, 4],   # -Y
+     [3, 7, 6], [3, 6, 2],   # +Y
+     [0, 4, 7], [0, 7, 3],   # -X
+     [1, 2, 6], [1, 6, 5]],  # +X
+    dtype=torch.int32,
+)
+
+
+def cube_mesh(centres: torch.Tensor, size, colors: Optional[torch.Tensor] = None):
+    """Build one axis-aligned cube per centre as a single mesh.
+
+    Drawn as real geometry rather than points so the grid reads as *cells* with
+    faces and edges -- which is what a sparse voxel grid actually is, and what
+    the wireframe overlay then outlines.
+
+    Args:
+        centres: (N, 3) cube centres.
+        size: Edge length, scalar or (N, 1) for per-cube sizes.
+        colors: Optional (N, 3) per-cube colour, expanded to vertices.
+
+    Returns:
+        (vertices, faces, vertex_colors or None)
+    """
+    n = centres.shape[0]
+    dev = centres.device
+    corners = _CUBE_CORNERS.to(dev)
+    if not torch.is_tensor(size):
+        size = torch.full((n, 1), float(size), device=dev)
+    verts = centres[:, None, :] + corners[None, :, :] * size[:, :, None]
+    verts = verts.reshape(-1, 3)
+
+    offsets = (torch.arange(n, device=dev, dtype=torch.int32) * 8)[:, None, None]
+    faces = (_CUBE_FACES.to(dev)[None] + offsets).reshape(-1, 3)
+
+    vcols = None
+    if colors is not None:
+        vcols = colors[:, None, :].expand(n, 8, 3).reshape(-1, 3).contiguous()
+    return verts.contiguous(), faces.contiguous(), vcols
