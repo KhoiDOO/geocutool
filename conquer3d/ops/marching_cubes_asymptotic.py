@@ -1,4 +1,4 @@
-"""GPU-accelerated Marching Cubes with Asymptotic Decider (Topologically Consistent MC).
+r"""GPU-accelerated Marching Cubes with Asymptotic Decider (Topologically Consistent MC).
 
 Classical Marching Cubes (Lorensen & Cline, 1987) suffers from topological ambiguity on
 voxel faces where diagonally opposite corners share identical signs, leading to holes,

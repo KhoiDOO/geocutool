@@ -1,4 +1,4 @@
-"""GPU-accelerated spatial indexing data structures and geometric representations.
+r"""GPU-accelerated spatial indexing data structures and geometric representations.
 
 This package exposes:
 - KD-Tree for $O(\log N)$ nearest neighbor queries (`KDTree`).
