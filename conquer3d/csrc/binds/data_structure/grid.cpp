@@ -11,6 +11,11 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Builds a dense structured voxel grid over the requested bounds and resolution.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> create_voxel_grid(
     std::vector<float> grid_min,
     std::vector<float> grid_max,
@@ -74,6 +79,11 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> create_vo
     return std::make_tuple(grid_vertices, voxels, opt_idx_grids);
 }
 
+/**
+ * @brief Evaluates per-grid-vertex normals from face normals, smooth normals, or the field gradient.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 torch::Tensor compute_grid_normal(torch::Tensor sdf, torch::Tensor grid_vertices, torch::Tensor idx_grids, std::vector<int64_t> res) {
     TORCH_CHECK(res.size() == 3, "res must have 3 elements.");
     
@@ -129,6 +139,11 @@ torch::Tensor compute_grid_normal(torch::Tensor sdf, torch::Tensor grid_vertices
     return torch::nn::functional::normalize(normals, torch::nn::functional::NormalizeFuncOptions().p(2).dim(1));
 }
 
+/**
+ * @brief Selects the voxels a surface actually crosses, discarding the rest.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 torch::Tensor compute_active_voxels(torch::Tensor voxels, torch::Tensor sdf, float iso) {
     TORCH_CHECK(voxels.device() == sdf.device(), "voxels and sdf must be on the same device.");
     TORCH_CHECK(voxels.dtype() == torch::kInt32, "voxels must be int32.");
@@ -147,6 +162,11 @@ torch::Tensor compute_active_voxels(torch::Tensor voxels, torch::Tensor sdf, flo
     return active_indices;
 }
 
+/**
+ * @brief Builds a narrow-band sparse voxel grid hugging a triangle mesh surface.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>> create_voxel_grid_from_tmesh(
     std::vector<float> grid_min,
     std::vector<float> grid_max,
@@ -342,6 +362,11 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::opti
     );
 }
 
+/**
+ * @brief Builds a point cloud of voxel centres covering a triangle mesh surface.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>> create_voxel_cloud_from_tmesh(
     std::vector<float> grid_min,
     std::vector<float> grid_max,
@@ -461,6 +486,14 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::opti
     );
 }
 
+/**
+ * @brief Tensor-level entry point for the depth-map voxel activation query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 torch::Tensor get_active_voxel_ids_from_depth_py(
     torch::Tensor depth_image,
     torch::Tensor c2w_tensor,
@@ -523,6 +556,11 @@ torch::Tensor get_active_voxel_ids_from_depth_py(
     return out_voxel_ids.slice(0, 0, valid_count);
 }
 
+/**
+ * @brief Assembles a sparse grid's vertex and voxel arrays from a set of active voxel indices.
+ * @details Validates its tensor arguments, then dispatches to the CUDA implementation.
+ * @return The constructed grid arrays as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> build_sparse_grid_from_active_voxels(
     torch::Tensor active_voxel_ids,
     std::vector<float> grid_min,
@@ -585,6 +623,12 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> build_spa
     return std::make_tuple(sparse_grid_vertices, remapped_voxels, return_unique_vert_ids ? std::make_optional(unique_vert_ids) : std::nullopt);
 }
 
+/**
+ * @brief Registers voxel grid construction and depth-map carving functions on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_ds_grid(py::module_& m) {
     m.def("create_voxel_grid", &create_voxel_grid,
           py::arg("grid_min"), py::arg("grid_max"), py::arg("res"),

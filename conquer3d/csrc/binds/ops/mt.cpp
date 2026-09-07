@@ -5,6 +5,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the Marching Tetrahedra extraction.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>> marching_tetrahedra_wrapper(
     torch::Tensor grid_vertices,
     torch::Tensor tets,
@@ -50,6 +58,14 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, std::opti
     );
 }
 
+/**
+ * @brief Tensor-level entry point for the Marching Tetrahedra backward pass.
+ * @details Validates that every incoming gradient is CUDA-resident and contiguous,
+ * unwraps the raw device pointers, and dispatches to the analytical adjoint kernel.
+ * @return Gradients with respect to the differentiable inputs.
+ * @warning Requires the same inputs the forward pass received; the adjoint recomputes
+ * topology rather than storing it.
+ */
 void marching_tetrahedra_backward_wrapper(
     torch::Tensor unique_edges,
     torch::Tensor grid_vertices,
@@ -107,6 +123,12 @@ void marching_tetrahedra_backward_wrapper(
     );
 }
 
+/**
+ * @brief Registers the Marching Tetrahedra operator and its backward pass on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_ops_mt(py::module_& m) {
     m.def("marching_tetrahedra", &marching_tetrahedra_wrapper,
           py::arg("grid_vertices"), py::arg("tets"), py::arg("vert_values"),

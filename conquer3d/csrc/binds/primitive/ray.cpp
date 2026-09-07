@@ -5,6 +5,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Converts a 3-element tensor into a `float3`.
+ * @details The ::Ray binding's copy of the shared conversion helper, kept local to avoid a
+ * cross-translation-unit dependency between binding files.
+ * @param[in] t A 1D tensor of exactly three elements.
+ * @return The equivalent `float3`.
+ * @warning Synchronises on a device-to-host copy.
+ */
 inline float3 tensor_to_float3_ray(const torch::Tensor& t) {
     TORCH_CHECK(t.dim() == 1 && t.size(0) == 3, "Tensor must be 1D with 3 elements");
     auto t_contig = t.contiguous().cpu().to(torch::kFloat32);
@@ -12,10 +20,21 @@ inline float3 tensor_to_float3_ray(const torch::Tensor& t) {
     return make_float3(ptr[0], ptr[1], ptr[2]);
 }
 
+/**
+ * @brief Converts a `float3` into a 3-element CPU tensor.
+ * @param[in] f The vector to convert.
+ * @return A `(3,)` float32 tensor on the host.
+ */
 inline torch::Tensor float3_to_tensor_ray(const float3& f) {
     return torch::tensor({f.x, f.y, f.z}, torch::dtype(torch::kFloat32));
 }
 
+/**
+ * @brief Registers the ::Ray geometric primitive on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_primitive_ray(py::module_& m) {
     py::class_<Ray>(m, "Ray", R"pbdoc(
         Parametric 3D Ray geometric primitive with hardware fast AABB slab intersection methods.

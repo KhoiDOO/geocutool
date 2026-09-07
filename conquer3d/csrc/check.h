@@ -49,6 +49,12 @@ inline bool check_cuda_result(cudaError_t code, const char *file, int line)
     return false;
 }
 
+/**
+ * @brief Aborts with a descriptive message when a CUDA API call fails.
+ * @details Wraps a runtime call, checks its status, and raises a Torch error naming the
+ * file and line. Used for internal allocations and copies where a silent failure would
+ * surface much later as corrupt output.
+ */
 #define CHECK_CUDA_INTERNAL(code) check_cuda_result((code), __FILE__, __LINE__)
 
 #endif // CHECK_H

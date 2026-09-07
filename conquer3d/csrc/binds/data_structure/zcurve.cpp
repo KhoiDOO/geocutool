@@ -5,6 +5,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the Morton Z-curve code query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 torch::Tensor compute_zcurve_wrapper(torch::Tensor points)
 {
     CHECK_INPUT(points);

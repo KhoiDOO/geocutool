@@ -5,6 +5,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the single-view volume integration in-place update.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 void single_view_volume_integral_bind(
     torch::Tensor grid_vertices,
     torch::Tensor sdf,
@@ -80,6 +88,12 @@ void single_view_volume_integral_bind(
     );
 }
 
+/**
+ * @brief Registers the single-view volume integration operator on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_ops_volint(py::module_& m) {
     m.def("single_view_volume_integral", &single_view_volume_integral_bind,
           py::arg("grid_vertices"), py::arg("sdf"), py::arg("weight"), py::arg("color"),

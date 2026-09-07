@@ -5,6 +5,15 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Converts a 3-element tensor into a `float3`.
+ * @details Moves the tensor to host memory as float32 before reading it, so a caller may
+ * pass a CUDA tensor without a separate transfer. Intended for scalar-sized arguments
+ * only.
+ * @param[in] t A 1D tensor of exactly three elements.
+ * @return The equivalent `float3`.
+ * @warning Synchronises on a device-to-host copy; never call this per element in a loop.
+ */
 inline float3 tensor_to_float3(const torch::Tensor& t) {
     TORCH_CHECK(t.dim() == 1 && t.size(0) == 3, "Tensor must be 1D with 3 elements");
     auto t_contig = t.contiguous().cpu().to(torch::kFloat32);
@@ -12,10 +21,21 @@ inline float3 tensor_to_float3(const torch::Tensor& t) {
     return make_float3(ptr[0], ptr[1], ptr[2]);
 }
 
+/**
+ * @brief Converts a `float3` into a 3-element CPU tensor.
+ * @param[in] f The vector to convert.
+ * @return A `(3,)` float32 tensor on the host.
+ */
 inline torch::Tensor float3_to_tensor(const float3& f) {
     return torch::tensor({f.x, f.y, f.z}, torch::dtype(torch::kFloat32));
 }
 
+/**
+ * @brief Registers the ::Triangle geometric primitive on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_primitive_triangle(py::module_& m) {
     py::class_<Triangle>(m, "Triangle", R"pbdoc(
         3D Triangle geometric primitive structure with hardware-optimized device methods.
@@ -187,15 +207,75 @@ void bind_primitive_triangle(py::module_& m) {
         .def("test_point_on_tria_plane", [](const Triangle& self, const torch::Tensor& p, float eps) {
                  return self.test_point_on_tria_plane(tensor_to_float3(p), eps);
              },
-             py::arg("p"), py::arg("eps") = 1e-5f)
+             py::arg("p"), py::arg("eps") = 1e-5f,
+             R"pbdoc(
+             Tests whether a point lies on the triangle's supporting plane.
+
+             Evaluates the absolute point-to-plane distance
+             $|\mathbf{n} \cdot (\mathbf{p} - \mathbf{v}_0)|$ against a tolerance, where
+             $\mathbf{n}$ is the unit face normal. This is a coplanarity test only; it
+             says nothing about whether the point falls within the triangle's bounds.
+
+             Args:
+                 p (torch.Tensor): (3,) float32 query point.
+                 eps (float, optional): Maximum absolute distance from the plane still
+                     treated as coplanar. Defaults to 1e-5.
+
+             Returns:
+                 bool: True if the point is within `eps` of the supporting plane.
+
+             Example:
+                 >>> tri.test_point_on_tria_plane(torch.tensor([0.2, 0.3, 0.0]))
+             )pbdoc")
         .def("test_point_inside_on_tria_plane", [](const Triangle& self, const torch::Tensor& p) {
                  return self.test_point_inside_on_tria_plane(tensor_to_float3(p));
              },
-             py::arg("p"))
+             py::arg("p"),
+             R"pbdoc(
+             Tests whether a coplanar point falls inside the triangle.
+
+             Solves for the barycentric coordinates $(u, v, w)$ of the point against the
+             edge vectors and reports whether all three are non-negative. The point is
+             assumed to already lie on the supporting plane -- a point far off the plane
+             projects onto it and may still report True, so pair this with
+             `test_point_on_tria_plane` (or use `test_point_inside`) for a full
+             containment test.
+
+             Args:
+                 p (torch.Tensor): (3,) float32 query point, assumed coplanar.
+
+             Returns:
+                 bool: True if the point lies within the triangle, edges and vertices
+                 included. False for degenerate triangles, whose barycentric denominator
+                 collapses below 1e-8.
+
+             Example:
+                 >>> tri.test_point_inside_on_tria_plane(tri.compute_centroid())
+             )pbdoc")
         .def("test_point_inside", [](const Triangle& self, const torch::Tensor& p, float eps) {
                  return self.test_point_inside(tensor_to_float3(p), eps);
              },
-             py::arg("p"), py::arg("eps") = 1e-5f)
+             py::arg("p"), py::arg("eps") = 1e-5f,
+             R"pbdoc(
+             Tests whether a point lies on the triangle itself.
+
+             The full containment predicate: the point must be coplanar within `eps`
+             **and** fall inside the triangle's barycentric bounds. Equivalent to
+             `test_point_on_tria_plane` followed by `test_point_inside_on_tria_plane`,
+             short-circuiting on the cheaper plane test first.
+
+             Args:
+                 p (torch.Tensor): (3,) float32 query point.
+                 eps (float, optional): Coplanarity tolerance passed to the plane test.
+                     Defaults to 1e-5.
+
+             Returns:
+                 bool: True if the point lies on the triangle's surface.
+
+             Example:
+                 >>> tri.test_point_inside(tri.compute_centroid())
+                 True
+             )pbdoc")
         .def("is_voxel_intersect", [](const Triangle& self, const torch::Tensor& voxel_min, const torch::Tensor& voxel_max) {
                  return self.is_voxel_intersect(tensor_to_float3(voxel_min), tensor_to_float3(voxel_max));
              },

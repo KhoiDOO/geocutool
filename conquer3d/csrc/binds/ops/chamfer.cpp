@@ -5,6 +5,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the one-sided Chamfer distance query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor> one_sided_chamfer_distance_wrapper(
     torch::Tensor query_points,
     torch::Tensor reference_points
@@ -50,6 +58,12 @@ std::tuple<torch::Tensor, torch::Tensor> one_sided_chamfer_distance_wrapper(
     return std::make_tuple(distances, indices);
 }
 
+/**
+ * @brief Registers the one-sided Chamfer distance operator on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_ops_chamfer(py::module_& m) {
     m.def("one_sided_chamfer_distance", &one_sided_chamfer_distance_wrapper,
           py::arg("query_points"), py::arg("reference_points"),

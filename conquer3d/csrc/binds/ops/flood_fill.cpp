@@ -6,6 +6,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the volumetric flood fill query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 torch::Tensor compute_flood_fill_wrapper(
     torch::Tensor vertices,
     torch::Tensor triangles,
@@ -30,6 +38,12 @@ torch::Tensor compute_flood_fill_wrapper(
     return ops::compute_flood_fill(vertices, triangles, aabb_mins, aabb_maxs, bvh_children, object_ids, grid_min, grid_max, grid_res, connectivity);
 }
 
+/**
+ * @brief Registers the volumetric flood fill operator on the extension module.
+ * @details Called once from `pybind.cpp` with the root module, so every symbol
+ * defined here lands directly on `conquer3d._C`.
+ * @param[in,out] m The `conquer3d._C` module object.
+ */
 void bind_ops_flood_fill(py::module_& m) {
     m.def("compute_flood_fill", &compute_flood_fill_wrapper,
           py::arg("vertices"), py::arg("triangles"), py::arg("aabb_mins"), py::arg("aabb_maxs"),

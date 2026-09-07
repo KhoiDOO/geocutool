@@ -11,6 +11,14 @@
 
 namespace py = pybind11;
 
+/**
+ * @brief Tensor-level entry point for the Gaussian inverse covariance query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 torch::Tensor compute_gs_covi_wrapper(
     const torch::Tensor &means,
     const torch::Tensor &rotations,
@@ -47,6 +55,14 @@ torch::Tensor compute_gs_covi_wrapper(
     return covi;
 }
 
+/**
+ * @brief Tensor-level entry point for the Gaussian AABB query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> compute_gs_aabb_wrapper(
     const torch::Tensor &means,
     const torch::Tensor &scales,
@@ -98,6 +114,14 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> compute_gs_aabb_wrapper(
     return std::make_tuple(aabb_min, aabb_max, contact_points);
 }
 
+/**
+ * @brief Tensor-level entry point for the Gaussian neighbour Mahalanobis radius query.
+ * @details Sits between pybind11 and the host dispatcher: it applies the `CHECK_INPUT`
+ * contract -- CUDA device, contiguous layout, expected dtype -- then unwraps
+ * `data_ptr` and calls the kernel launcher. Validating here keeps the launch path
+ * free of checks and gives Python callers a clear error instead of a device fault.
+ * @return The operator's results as PyTorch tensors.
+ */
 torch::Tensor solve_gs_neighbor_mahalanobis_radius_wrapper(
     const torch::Tensor &means,
     const torch::Tensor &covis,
