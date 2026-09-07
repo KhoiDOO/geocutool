@@ -11,11 +11,32 @@ Python function render with identical grammar.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import re
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from model import TIERS, TIER_ORDER, Doc, Group, Symbol
+
+_ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+
+def _fingerprint(rel: str) -> str:
+    """Short content hash for an asset URL.
+
+    The site is served as plain files with no cache headers of its own, so
+    without this a browser keeps using the stylesheet it already has and a
+    rebuilt page renders with stale CSS.
+    """
+    try:
+        return hashlib.sha1((_ASSETS / rel).read_bytes()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
+
+CSS_V = _fingerprint("css/site.css")
+JS_V = _fingerprint("js/site.js")
 
 KATEX = "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9"
 FONTS = (
@@ -262,7 +283,7 @@ def shell(
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}">
 <link rel="stylesheet" href="{KATEX}/katex.min.css">
-<link rel="stylesheet" href="{base}assets/css/site.css">
+<link rel="stylesheet" href="{base}assets/css/site.css?v={CSS_V}">
 <script>
   // Applied before first paint so the theme never flashes.
   (function(){{
@@ -320,7 +341,7 @@ def shell(
 <script defer src="{KATEX}/katex.min.js"></script>
 <script defer src="{KATEX}/contrib/auto-render.min.js"
   onload="renderMathInElement(document.body,{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'$',right:'$',display:false}}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false}});"></script>
-<script src="{base}assets/js/site.js"></script>
+<script src="{base}assets/js/site.js?v={JS_V}"></script>
 </body>
 </html>
 """

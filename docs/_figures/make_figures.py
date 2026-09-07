@@ -65,8 +65,16 @@ def build_grid(tmesh, res: int, normal_mode: int = 0, pad: int = 1):
     )
     grid_vertices, voxels, normals = out[0], out[1], out[-1]
 
-    tmesh.build_flood_fill_data(BOUNDS_MIN, BOUNDS_MAX, [res] * 3)
-    sdf = tmesh.query_points(grid_vertices, return_sdf=True, sign_mode=3)[-1]
+    # The single-level fill allocates a dense grid (1536³ int32 is 13.5 GiB and
+    # will not fit). The coarse-fine structure stays under ~10 MB at 1024³, so
+    # anything large is signed with that instead.
+    if res >= 1024:
+        tmesh.build_flood_fill_cf_data(BOUNDS_MIN, BOUNDS_MAX, [res] * 3)
+        sign_mode = 5
+    else:
+        tmesh.build_flood_fill_data(BOUNDS_MIN, BOUNDS_MAX, [res] * 3)
+        sign_mode = 3
+    sdf = tmesh.query_points(grid_vertices, return_sdf=True, sign_mode=sign_mode)[-1]
     return grid_vertices, voxels, sdf.contiguous(), normals
 
 
@@ -90,6 +98,31 @@ def gt_mesh(tmesh):
     rather than having to remember what the object is meant to look like.
     """
     return R.normalize_mesh(tmesh.vertices), tmesh.triangles.int().contiguous()
+
+
+SURFACE_SAMPLES = 200_000
+
+
+def surface_metrics(verts, faces, ref_points):
+    """Chamfer and Hausdorff distance of a mesh against reference surface samples.
+
+    Points are drawn area-weighted from the extracted surface rather than using
+    its vertices, so the metric measures the surfaces themselves and is not
+    biased by how densely each extractor happens to place vertices.
+
+    Returns:
+        (chamfer, hausdorff) as Euclidean distances in grid units.
+    """
+    from conquer3d.data_structure import TriangleMesh
+    from conquer3d.ops import chamfer_distance, hausdorff_distance
+
+    pts = TriangleMesh(verts.contiguous(), faces.int().contiguous()).sample_points(
+        SURFACE_SAMPLES)[0].contiguous()
+    scalar = lambda r: float(r[0] if isinstance(r, tuple) else r)
+    cd = scalar(chamfer_distance(pts, ref_points, squared=False))
+    hd = scalar(hausdorff_distance(pts, ref_points, squared=False))
+    del pts
+    return cd, hd
 
 
 def divergence_point(verts_a, verts_b):
@@ -137,7 +170,8 @@ AZ_ALGO = 218
 
 
 def fig_algorithms(rnd):
-    from conquer3d.ops import dc, dmc, marching_cubes, mca
+    from conquer3d.ops import (dc, dmc, marching_cubes,
+                               marching_tetrahedra_grid, mca)
 
     tmesh = load_mesh(_asset("Fandisk"))
     gv, vox, sdf, nrm = build_grid(tmesh, RES_ALGO, normal_mode=0)
@@ -147,10 +181,12 @@ def fig_algorithms(rnd):
         "MC Asymptotic": first_two(mca(gv, vox, sdf, iso=0.0)),
         "Dual Contouring": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0)),
         "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0)),
+        "Marching Tetrahedra": first_two(marching_tetrahedra_grid(gv, vox, sdf, iso=0.0)),
     }
 
-    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER]
-    accents = [(34, 211, 238), (118, 185, 0), (167, 139, 250), (251, 191, 36)]
+    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER, R.ROSE]
+    accents = [(34, 211, 238), (118, 185, 0), (167, 139, 250),
+               (251, 191, 36), (251, 113, 133)]
 
     # Zoom where Marching Cubes and Dual Contouring disagree most: the crease.
     mc_v = R.normalize_mesh(runs["Marching Cubes"][0])
@@ -184,7 +220,7 @@ def fig_algorithms(rnd):
     close = compose.trim(close)
     top = compose.grid(wide, labels, sublabels=subs, accents=accents)
     bot = compose.grid(close, ["Crease detail"] * len(close),
-                       sublabels=["reference edge"] + [f"{RES_ALGO}³ grid"] * 4,
+                       sublabels=["reference edge"] + [f"{RES_ALGO}³ grid"] * (len(close) - 1),
                        accents=accents)
     compose.save(compose.stack([top, bot], pad=16), OUT / "fig-algorithms.png")
 
@@ -227,7 +263,7 @@ def fig_normal_modes(rnd):
 # --------------------------------------------------------------------------- #
 
 
-def fig_sign_modes():
+def fig_sign_modes(rnd):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -252,10 +288,23 @@ def fig_sign_modes():
         except Exception as exc:
             print(f"    sign_mode={mode} unavailable: {str(exc)[:70]}")
 
-    n = len(fields)
+    # Lead with the mesh being sliced, so the contours have a referent.
+    gv_gt, gf_gt = gt_mesh(tmesh)
+    shot = compose.trim([rnd.render(gv_gt, gf_gt, base=GT_TINT, flat=False,
+                                    azimuth=90, elevation=6, rim_strength=0.18)])[0]
+
+    n = len(fields) + 1
     fig, axes = plt.subplots(1, n, figsize=(3.1 * n, 3.5), dpi=170)
     axes = np.atleast_1d(axes)
-    for ax, (mode, field) in zip(axes, sorted(fields.items())):
+
+    axes[0].imshow(shot, origin="upper")
+    axes[0].set_title("Ground truth\nsliced at z = 0", fontsize=12, pad=9)
+    axes[0].set_xticks([]); axes[0].set_yticks([])
+    for spine in axes[0].spines.values():
+        spine.set_visible(False)
+    style_axes(axes[0], fig)
+
+    for ax, (mode, field) in zip(axes[1:], sorted(fields.items())):
         lim = float(np.percentile(np.abs(field), 97)) or 1.0
         ax.imshow(field, cmap="RdBu_r", vmin=-lim, vmax=lim, origin="lower",
                   extent=[-1, 1, -1, 1])
@@ -324,7 +373,7 @@ def fig_curvature(rnd):
 # --------------------------------------------------------------------------- #
 
 
-def fig_sdf_slices():
+def fig_sdf_slices(rnd):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -335,8 +384,21 @@ def fig_sdf_slices():
 
     lin = torch.linspace(-1.0, 1.0, res, device=DEV)
     slices = [-0.25, 0.0, 0.25]
-    fig, axes = plt.subplots(1, len(slices), figsize=(3.4 * len(slices), 3.6), dpi=170)
-    for ax, z in zip(np.atleast_1d(axes), slices):
+    gv_gt, gf_gt = gt_mesh(tmesh)
+    shot = compose.trim([rnd.render(gv_gt, gf_gt, base=GT_TINT, flat=False,
+                                    azimuth=200, elevation=12, rim_strength=0.18)])[0]
+
+    fig, axes = plt.subplots(1, len(slices) + 1,
+                             figsize=(3.4 * (len(slices) + 1), 3.6), dpi=170)
+    axes = np.atleast_1d(axes)
+    axes[0].imshow(shot, origin="upper")
+    axes[0].set_title("Ground truth", fontsize=13, pad=9)
+    axes[0].set_xticks([]); axes[0].set_yticks([])
+    for spine in axes[0].spines.values():
+        spine.set_visible(False)
+    style_axes(axes[0], fig)
+
+    for ax, z in zip(axes[1:], slices):
         yy, xx = torch.meshgrid(lin, lin, indexing="ij")
         pts = torch.stack([xx.reshape(-1), yy.reshape(-1),
                            torch.full((res * res,), z, device=DEV)], dim=-1).contiguous()
@@ -367,6 +429,7 @@ def fig_sdf_slices():
 
 # Front-facing view of the Armadillo.
 AZ_RES = 205
+RES_LADDER = (64, 128, 256, 512, 1024, 1536, 2048)
 
 
 def fig_resolution(rnd):
@@ -379,19 +442,33 @@ def fig_resolution(rnd):
                          azimuth=AZ_RES, elevation=10)]
     labels = ["Ground truth"]
     subs = [f"{gf_gt.shape[0]:,} faces"]
-    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER, R.ROSE]
-    accents = [(150, 158, 176), (34, 211, 238), (118, 185, 0),
-               (167, 139, 250), (251, 191, 36), (251, 113, 133)]
+    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER, R.ROSE,
+             (0.45, 0.78, 0.62), (0.95, 0.60, 0.35)]
+    accents = [(150, 158, 176), (34, 211, 238), (118, 185, 0), (167, 139, 250),
+               (251, 191, 36), (251, 113, 133), (115, 199, 158), (242, 153, 89)]
 
-    for res, tint in zip((64, 128, 256, 512, 1024), tints):
+    # Reference samples for the accuracy metrics, drawn once from the source.
+    ref = tmesh.sample_points(SURFACE_SAMPLES)[0].contiguous()
+    metrics = []
+
+    for res, tint in zip(RES_LADDER, tints):
         gv, vox, sdf, _ = build_grid(tmesh, res)
         v, f = first_two(dmc(gv, vox, sdf, iso=0.0))
         panels.append(render_mesh(rnd, v, f, base=tint, flat=True,
                                   azimuth=AZ_RES, elevation=10))
+        cd, hd = surface_metrics(v, f, ref)
+        metrics.append((res, int(f.shape[0]), cd, hd))
         labels.append(f"{res}³")
-        subs.append(f"{f.shape[0]:,} faces")
-        del gv, vox, sdf
+        subs.append(f"{f.shape[0]:,} faces\nCD {cd * 1e3:.2f}e-3 · HD {hd * 1e3:.1f}e-3")
+        print(f"    {res:>5}³  {f.shape[0]:>10,} faces   "
+              f"chamfer {cd:.3e}   hausdorff {hd:.3e}")
+        del gv, vox, sdf, v, f
         torch.cuda.empty_cache()
+
+    Path(OUT.parent.parent / "_figures" / "resolution_metrics.json").write_text(
+        __import__("json").dumps(
+            [{"res": r, "faces": n, "chamfer": c, "hausdorff": h}
+             for r, n, c, h in metrics], indent=2))
 
     compose.save(compose.grid(compose.trim(panels), labels, sublabels=subs, accents=accents),
                  OUT / "fig-resolution.png")
@@ -464,6 +541,246 @@ def to_webp(png_path: Path) -> None:
     print(f"    -> {out.name}  {out.stat().st_size / 1024:.0f} KB")
 
 
+# --------------------------------------------------------------------------- #
+# Figure 8 -- the extraction pipeline, step by step
+# --------------------------------------------------------------------------- #
+
+# Coarse enough that individual cells are legible as cubes.
+RES_PIPE = 40
+AZ_PIPE = 210
+
+
+def fig_pipeline(rnd):
+    """Walk one extraction end to end: mesh, cells, field, active cells, surface."""
+    from conquer3d.ops import dmc
+
+    tmesh = load_mesh(_asset("Spot"))
+    gv, vox, sdf, _ = build_grid(tmesh, RES_PIPE)
+    idx = vox.long()
+
+    # One shared normalisation for every panel, so the cubes sit exactly where
+    # the surface does instead of each panel being framed independently.
+    src = tmesh.vertices.float()
+    lo, hi = src.min(0).values, src.max(0).values
+    centre = 0.5 * (lo + hi)
+    radius = (src - centre).norm(dim=-1).max().clamp(min=1e-8)
+    fit = lambda p: (p - centre) / radius
+
+    cell_world = (BOUNDS_MAX[0] - BOUNDS_MIN[0]) / RES_PIPE
+    cell = cell_world / float(radius)
+
+    centres = fit(gv[idx].mean(1))
+    corner_sdf = sdf[idx]                      # (M, 8)
+    centre_sdf = corner_sdf.mean(1)
+    # A cell contributes geometry only when its corners straddle the isolevel.
+    bipolar = (corner_sdf.min(1).values < 0.0) & (corner_sdf.max(1).values >= 0.0)
+
+    print(f"    {centres.shape[0]:,} narrow-band cells, "
+          f"{int(bipolar.sum()):,} bipolar ({100 * bipolar.float().mean():.0f}%)")
+
+    shot = lambda v, f, **kw: rnd.render(v, f, flat=True, azimuth=AZ_PIPE,
+                                         elevation=16, **kw)
+    panels, labels, subs = [], [], []
+
+    # 1 -- the input.
+    panels.append(shot(fit(src), tmesh.triangles.int(), base=GT_TINT))
+    labels.append("1 · Input mesh")
+    subs.append(f"{tmesh.triangles.shape[0]:,} triangles")
+
+    # 2 -- the cells that were allocated at all.
+    v2, f2, _ = R.cube_mesh(centres, cell * 0.88)
+    panels.append(shot(v2, f2, base=R.CYAN, wireframe=0.02))
+    labels.append("2 · Narrow-band cells")
+    subs.append(f"{centres.shape[0]:,} cells, not {RES_PIPE ** 3:,}")
+
+    # 3 -- the field those cells carry.
+    # Narrow-band cells all sit near the isosurface, so percentile scaling would
+    # flatten them into one colour. Normalise symmetrically about zero across a
+    # couple of cell widths instead: blue inside, red outside, white at the
+    # surface -- which is what the sign actually means.
+    import matplotlib.cm as cm
+
+    span = 2.5 * cell_world
+    t = (centre_sdf.detach().cpu().numpy() / span).clip(-1.0, 1.0) * 0.5 + 0.5
+    cols = torch.tensor(cm.get_cmap("coolwarm")(t)[:, :3],
+                        dtype=torch.float32, device=DEV)
+    # Seen from outside, every visible cell is positive and the field looks
+    # uniform. Cutting the half nearest the camera away exposes the sign change
+    # through the band: blue inside, red outside, white at the crossing.
+    keep = centres[:, 0] >= 0.0
+    v3, f3, c3 = R.cube_mesh(centres[keep], cell * 0.88, colors=cols[keep])
+    panels.append(shot(v3, f3, colors=c3, wireframe=0.02, rim_strength=0.2))
+    labels.append("3 · Signed distance")
+    subs.append("cutaway: blue inside, red outside")
+
+    # 4 -- the subset that actually emits geometry.
+    v4, f4, _ = R.cube_mesh(centres[bipolar], cell * 0.88)
+    panels.append(shot(v4, f4, base=R.AMBER, wireframe=0.02))
+    labels.append("4 · Bipolar cells")
+    subs.append(f"{int(bipolar.sum()):,} straddle the isolevel")
+
+    # 5 -- the surface.
+    ev, ef = first_two(dmc(gv, vox, sdf, iso=0.0))
+    panels.append(shot(fit(ev), ef, base=R.GREEN))
+    labels.append("5 · Extracted surface")
+    subs.append(f"{ef.shape[0]:,} faces")
+
+    accents = [(150, 158, 176), (34, 211, 238), (200, 90, 120),
+               (251, 191, 36), (118, 185, 0)]
+    compose.save(compose.grid(compose.trim(panels), labels, sublabels=subs,
+                              accents=accents),
+                 OUT / "fig-pipeline.png")
+
+
+
+# --------------------------------------------------------------------------- #
+# Figures 9-11 -- spatial data structures
+# --------------------------------------------------------------------------- #
+
+POINT_SIZE = 0.0085
+
+
+def point_cloud(rnd, pts, colors, *, azimuth=210, elevation=14, size=POINT_SIZE, **kw):
+    """Render a point set as small shaded cubes.
+
+    Cubes rather than sprites: they catch the light, so depth and density read
+    the way they do for the voxel figures, and the same renderer handles both.
+    """
+    v, f, c = R.cube_mesh(pts, size, colors=colors)
+    return rnd.render(v, f, colors=c, flat=True, azimuth=azimuth,
+                      elevation=elevation, **kw)
+
+
+def fig_zcurve(rnd):
+    """Morton ordering: the same points, before and after the space-filling sort."""
+    from conquer3d.data_structure import z_curve_sort
+
+    tmesh = load_mesh(_asset("Armadillo"))
+    n = 45_000
+    pts = tmesh.sample_points(n)[0].contiguous()
+    fit = R.normalize_mesh(pts)
+
+    rank = np.linspace(0.0, 1.0, n)
+    ramp = lambda t: torch.tensor(compose.colormap(t, "turbo", robust=0.0),
+                                  dtype=torch.float32, device=DEV)
+
+    # Morton codes assume the unit cube.
+    lo, hi = pts.min(0).values, pts.max(0).values
+    unit = ((pts - lo) / (hi - lo).clamp(min=1e-8)).contiguous()
+    out = z_curve_sort(unit)
+    order = out[1] if isinstance(out, tuple) else out
+    order = order.reshape(-1).long()
+
+    panels = [
+        point_cloud(rnd, fit, ramp(rank)),
+        point_cloud(rnd, fit[order], ramp(rank)),
+    ]
+    labels = ["Insertion order", "Morton order"]
+    subs = [f"{n:,} surface samples", "after z_curve_sort"]
+
+    print(f"    {n:,} points")
+    compose.save(compose.grid(compose.trim(panels), labels, sublabels=subs,
+                              accents=[(150, 158, 176), (34, 211, 238)]),
+                 OUT / "fig-zcurve.png")
+
+
+def fig_meshbvh(rnd):
+    """One ray against a sphere: which triangles it hits, and which voxels."""
+    from conquer3d._C import BVH, MeshBVH
+    from conquer3d.creation import create_sphere
+    from conquer3d.data_structure import create_voxel_grid_from_tmesh, TriangleMesh
+
+    verts, tris = create_sphere(26, 16, 1.0)
+    verts = verts.cuda().float().contiguous()
+    tris = tris.cuda().int().contiguous()
+
+    # A near-tangent ray. On a diametric ray the entry and exit triangles face
+    # opposite ways and one is always hidden; grazing the cap puts both on the
+    # same visible side.
+    origin = torch.tensor([[-3.0, 0.84, 0.0]], device=DEV)
+    direction = torch.tensor([[1.0, 0.0, 0.0]], device=DEV)
+
+    tv = verts[tris.long()]
+    mesh_bvh = MeshBVH(tv.min(1).values.contiguous(), tv.max(1).values.contiguous())
+    _, hit_tris, hit_pts, hit_dist = mesh_bvh.get_ray_intersection(
+        origin, direction, verts, tris, True)
+    hit_tris = hit_tris.reshape(-1).long()
+    print(f"    sphere: {tris.shape[0]:,} triangles, ray hits {hit_tris.numel()}")
+
+    # The ray is drawn as a dense chain of cubes, which works for any direction
+    # without needing oriented box geometry.
+    def ray_rod(t0, t1, n=260):
+        t = torch.linspace(t0, t1, n, device=DEV)[:, None]
+        return origin[0][None, :] + t * direction[0][None, :]
+
+    scale = 1.0 / 1.0  # sphere already has unit radius
+    fit = lambda p: p * scale
+
+    def compose_scene(base_v, base_f, base_cols, extra):
+        """Concatenate meshes into one draw so a single render shows them all."""
+        vs, fs, cs, off = [base_v], [base_f], [base_cols], base_v.shape[0]
+        for v, f, c in extra:
+            vs.append(v); fs.append(f + off); cs.append(c); off += v.shape[0]
+        return (torch.cat(vs).contiguous(), torch.cat(fs).int().contiguous(),
+                torch.cat(cs).contiguous())
+
+    NEUTRAL = torch.tensor([0.62, 0.66, 0.74], device=DEV)
+    HIT = torch.tensor([0.46, 0.73, 0.0], device=DEV)
+    RAY = torch.tensor([0.98, 0.75, 0.14], device=DEV)
+
+    panels, labels, subs = [], [], []
+
+    # --- panel 1: triangles the ray intersects ------------------------------
+    tri_cols = NEUTRAL[None, :].expand(tris.shape[0], 3).clone()
+    tri_cols[hit_tris] = HIT
+    # Per-face colour needs per-face vertices, so the sphere is exploded first.
+    ev = verts[tris.long()].reshape(-1, 3)
+    ef = torch.arange(ev.shape[0], device=DEV, dtype=torch.int32).reshape(-1, 3)
+    ec = tri_cols[:, None, :].expand(-1, 3, -1).reshape(-1, 3)
+
+    rv, rf, rc = R.cube_mesh(ray_rod(0.0, 4.2), 0.028,
+                             colors=RAY[None, :].expand(260, 3))
+    v1, f1, c1 = compose_scene(fit(ev), ef, ec, [(fit(rv), rf, rc)])
+    panels.append(rnd.render(v1, f1, colors=c1, flat=True, azimuth=28,
+                             elevation=46, fit_radius=1.3, rim_strength=0.25))
+    labels.append("Ray vs triangles")
+    subs.append(f"{tris.shape[0]:,} triangles · {hit_tris.numel()} hit")
+
+    # --- panel 2: voxels the ray intersects ---------------------------------
+    tmesh = TriangleMesh(verts, tris)
+    res = 22
+    gv, vox = create_voxel_grid_from_tmesh(
+        grid_min=[-1.3] * 3, grid_max=[1.3] * 3, res=[res] * 3,
+        tmesh=tmesh, pad=1, return_normals=False)[:2]
+    corners = gv[vox.long()]
+    vmin = corners.min(1).values.contiguous()
+    vmax = corners.max(1).values.contiguous()
+
+    voxel_bvh = BVH(vmin, vmax)
+    _, hit_vox = voxel_bvh.query_ray(origin, direction)
+    hit_vox = hit_vox.reshape(-1).long().unique()
+    print(f"    voxels: {vox.shape[0]:,} cells, ray crosses {hit_vox.numel()}")
+
+    centres = 0.5 * (vmin + vmax)
+    cell = float((vmax[0] - vmin[0]).max())
+    vox_cols = NEUTRAL[None, :].expand(centres.shape[0], 3).clone() * 0.72
+    vox_cols[hit_vox] = HIT
+    sizes = torch.full((centres.shape[0], 1), cell * 0.20, device=DEV)
+    sizes[hit_vox] = cell * 0.98
+
+    cv, cf, cc = R.cube_mesh(centres, sizes, colors=vox_cols)
+    v2, f2, c2 = compose_scene(fit(cv), cf, cc,
+                               [(fit(rv), rf, rc)])
+    panels.append(rnd.render(v2, f2, colors=c2, flat=True, azimuth=28,
+                             elevation=46, fit_radius=1.3, rim_strength=0.2))
+    labels.append("Ray vs voxels")
+    subs.append(f"{vox.shape[0]:,} cells · {hit_vox.numel()} crossed")
+
+    compose.save(compose.grid(compose.trim(panels), labels, sublabels=subs,
+                              accents=[(118, 185, 0), (251, 191, 36)]),
+                 OUT / "fig-meshbvh.png")
+
+
 def _asset(name):
     import conquer3d.data.assets as assets
 
@@ -473,11 +790,14 @@ def _asset(name):
 FIGURES = [
     ("algorithms", fig_algorithms, True),
     ("normal modes", fig_normal_modes, True),
-    ("sign modes", fig_sign_modes, False),
+    ("sign modes", fig_sign_modes, True),
     ("curvature", fig_curvature, True),
-    ("sdf slices", fig_sdf_slices, False),
+    ("sdf slices", fig_sdf_slices, True),
     ("resolution", fig_resolution, True),
     ("memory", fig_memory, False),
+    ("pipeline", fig_pipeline, True),
+    ("zcurve", fig_zcurve, True),
+    ("meshbvh", fig_meshbvh, True),
 ]
 
 

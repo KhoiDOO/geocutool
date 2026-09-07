@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
-<link rel="stylesheet" href="assets/css/site.css">
+<link rel="stylesheet" href="assets/css/site.css?v=78c798bf8d">
 <script>
   // Applied before first paint so the theme never flashes.
   (function(){
@@ -24,7 +24,7 @@
 <body>
 <header class="nav">
   <a class="brand" href="index.html">
-    <span class="mark"></span> Conquer3D <span class="ver">v0.7.2</span>
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.3</span>
   </a>
   <nav class="nav-tabs"><a href="index.html" class="">Showcase</a><a href="documentation.html" class="">Documentation</a><a href="api/index.html" class="">API Reference</a><a href="benchmarks.html" class="active">Benchmarks</a><a href="about.html" class="">About</a></nav>
   <div class="nav-right">
@@ -46,32 +46,107 @@
 <div class="page-head">
   <div class="crumbs"><a href="index.html">Home</a> › Benchmarks</div>
   <h1 style="font-family:var(--sans)">Benchmarks</h1>
-  <p class="sub">Measured extraction throughput on real geometry.</p>
+  <p class="sub">Measured on NVIDIA GeForce RTX 4090, torch 2.8.0+cu128,
+  CUDA 12.8. Every number on this page is produced by
+  <code>docs/_figures/make_benchmarks.py</code> and can be reproduced.</p>
 </div>
 </div>
 
-<section class="section wrap" style="padding-top:8px;border-bottom:none">
+<section class="section wrap" style="padding-top:8px">
   <div class="section-head">
-    <span class="kicker">Throughput</span>
-    <h2>Isosurface extraction</h2>
-    <p>Measured on an NVIDIA GeForce RTX 4090 over the Fandisk CAD model at $1024^3$
-    resolution — 6.86M sparse vertices across 5.15M active voxels.</p>
+    <span class="kicker">Extraction</span>
+    <h2>Every extractor at 1024³</h2>
+    <p>The same narrow-band grid and signed distance field, meshed by each operator.
+    Timed with CUDA events around the operator alone — grid construction and field
+    evaluation happen first and are not counted — as the median of
+    7 runs after 2 warm-ups.</p>
   </div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Algorithm</th><th>Output</th><th>Vertices</th><th>Faces</th>
-    <th>Latency</th><th>Throughput</th><th>Watertight</th></tr></thead>
-    <tbody><tr><td><strong>Dual Marching Cubes</strong></td><td>Triangles</td><td class="num">1,716,386</td><td class="num">3,432,768</td><td class="num hl">3.44 ms</td><td class="num">~1.0B faces/s</td><td>Yes</td></tr><tr><td><strong>Dual Marching Cubes</strong></td><td>Pure Quads</td><td class="num">1,716,386</td><td class="num">1,716,384</td><td class="num hl">3.22 ms</td><td class="num">533M quads/s</td><td>Yes</td></tr><tr><td><strong>Dual Contouring + Normals</strong></td><td>Triangles</td><td class="num">1,716,386</td><td class="num">3,432,768</td><td class="num hl">4.79 ms</td><td class="num">717M faces/s</td><td>Yes</td></tr><tr><td><strong>Marching Cubes Asymptotic</strong></td><td>Triangles</td><td class="num">1,716,384</td><td class="num">3,432,764</td><td class="num hl">16.42 ms</td><td class="num">209M faces/s</td><td>Yes</td></tr></tbody>
+    <thead><tr><th>Algorithm</th><th>Vertices</th><th>Faces</th>
+    <th>Latency</th><th>Throughput</th></tr></thead>
+    <tbody><tr><td><strong>DMC (pure quads)</strong></td><td class="num">1,716,384</td><td class="num">1,716,382</td><td class="num hl">2.51 ms</td><td class="num">684M faces/s</td></tr><tr><td><strong>Dual Marching Cubes</strong></td><td class="num">1,716,384</td><td class="num">3,432,764</td><td class="num hl">2.62 ms</td><td class="num">1,310M faces/s</td></tr><tr><td><strong>MC Asymptotic</strong></td><td class="num">1,716,382</td><td class="num">3,432,760</td><td class="num hl">2.71 ms</td><td class="num">1,267M faces/s</td></tr><tr><td><strong>Dual Contouring</strong></td><td class="num">1,716,384</td><td class="num">3,432,764</td><td class="num hl">3.88 ms</td><td class="num">885M faces/s</td></tr><tr><td><strong>Marching Cubes</strong></td><td class="num">1,716,382</td><td class="num">3,432,760</td><td class="num hl">7.88 ms</td><td class="num">436M faces/s</td></tr><tr><td><strong>Marching Tetrahedra</strong></td><td class="num">6,113,918</td><td class="num">12,227,832</td><td class="num hl">44.56 ms</td><td class="num">274M faces/s</td></tr></tbody>
   </table></div>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-extraction.webp" alt="Extraction latency and throughput against grid resolution" loading="lazy"></div></figure>
   <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">Reading these numbers</div>
-  <p>Latency covers extraction only, on a grid that has already been built and populated.
-  Dual Marching Cubes leads because it emits multiple dual vertices per cell without a
-  per-cell solve; Dual Contouring pays for a $3\times3$ Jacobi SVD per voxel and buys sharp
-  creases with it.</p></div>
+  <p>Throughput rises with resolution because the fixed launch and scan overhead is
+  amortised over more cells — the operators are latency-bound at 128³ and
+  bandwidth-bound by 1024³. Marching Tetrahedra emits roughly 3.5× the faces of the
+  cube-based methods, since it splits every cell into six tetrahedra, so its lower
+  face rate still represents comparable work.</p></div>
 </section>
 
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">Sign determination</span>
+    <h2>What each sign mode costs</h2>
+    <p>One million random query points against the Bimba bust, timed per mode.</p>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Mode</th><th>Method</th><th>23M points</th><th>Rate</th><th>Relative</th></tr></thead>
+    <tbody><tr><td><span class="badge">sign_mode=5</span></td><td><strong>Coarse-fine fill</strong></td><td class="num">1,776 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=3</span></td><td><strong>Flood fill</strong></td><td class="num">1,777 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=2</span></td><td><strong>Winding number</strong></td><td class="num">1,778 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=1</span></td><td><strong>Pseudonormal</strong></td><td class="num">1,863 ms</td><td class="num">12.3M pts/s</td><td class="num">1.05×</td></tr><tr><td><span class="badge">sign_mode=4</span></td><td><strong>Hybrid consensus</strong></td><td class="num">1,879 ms</td><td class="num">12.2M pts/s</td><td class="num">1.06×</td></tr><tr><td><span class="badge">sign_mode=0</span></td><td><strong>Ray parity</strong></td><td class="num">1,948 ms</td><td class="num">11.8M pts/s</td><td class="num">1.10×</td></tr></tbody>
+  </table></div>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-signmodes.webp" alt="Sign mode query time and throughput against query-set size" loading="lazy"></div></figure>
+  <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">The choice is nearly free, and it stays that way</div>
+  <p>Swept across 10 query-set sizes from 1M to 23M points —
+  mostly prime multiples, so no size is a multiple of another and any cache resonance would
+  show rather than hide. Cost is linear in the number of points and throughput is flat, so
+  the ranking never changes with scale. The spread across all six modes is only
+  1.10×, because nearly all of the time is the BVH closest-point traversal that
+  every mode shares; deciding the sign afterwards is a small fraction. Pick the mode that
+  is most robust for your geometry, not the cheapest.</p></div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">Distance metrics</span>
+    <h2>Chamfer and Hausdorff cost</h2>
+    <p>Both directions and both one-sided variants, on area-weighted surface samples
+    of the Armadillo, timed against increasing cloud size.</p>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Points per cloud</th><th>One-sided Chamfer</th><th>Chamfer</th><th>One-sided Hausdorff</th><th>Hausdorff</th></tr></thead>
+    <tbody><tr><td><strong>0.1M</strong></td><td class="num">2.01 ms</td><td class="num">3.59 ms</td><td class="num">1.82 ms</td><td class="num">3.60 ms</td></tr><tr><td><strong>0.25M</strong></td><td class="num">3.39 ms</td><td class="num">6.65 ms</td><td class="num">3.33 ms</td><td class="num">6.66 ms</td></tr><tr><td><strong>0.5M</strong></td><td class="num">6.02 ms</td><td class="num">12.06 ms</td><td class="num">6.01 ms</td><td class="num">12.04 ms</td></tr><tr><td><strong>1M</strong></td><td class="num">11.64 ms</td><td class="num">23.21 ms</td><td class="num">11.63 ms</td><td class="num">23.23 ms</td></tr><tr><td><strong>2M</strong></td><td class="num">33.94 ms</td><td class="num">68.01 ms</td><td class="num">34.05 ms</td><td class="num">68.12 ms</td></tr><tr><td><strong>4M</strong></td><td class="num">92.80 ms</td><td class="num">186.13 ms</td><td class="num">92.82 ms</td><td class="num">186.09 ms</td></tr></tbody>
+  </table></div>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-distance.webp" alt="Chamfer and Hausdorff distance timing against point-cloud size" loading="lazy"></div></figure>
+  <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">Reading these numbers</div>
+  <p>The symmetric metrics cost almost exactly twice their one-sided counterparts, which
+  is what you would expect: each runs the same nearest-neighbour query once per direction.
+  Chamfer and Hausdorff are within noise of each other because both are dominated by the
+  same KD-tree build and traversal — they differ only in how the per-point distances are
+  reduced. Growth is super-linear past 1M points as the tree build starts to dominate.</p></div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">Pipeline</span>
+    <h2>What happens before extraction</h2>
+    <p>Building the narrow band, the flood-fill structure, and the field itself.</p>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Resolution</th><th>Active cells</th><th>of dense</th>
+    <th>Grid build</th><th>Flood fill</th><th>SDF query</th></tr></thead>
+    <tbody><tr><td><strong>128³</strong></td><td class="num">79,472</td><td class="num">3.79%</td><td class="num">4.2 ms</td><td class="num">3.6 ms</td><td class="num">0.3 ms</td></tr><tr><td><strong>256³</strong></td><td class="num">319,357</td><td class="num">1.90%</td><td class="num">5.2 ms</td><td class="num">9.1 ms</td><td class="num">0.3 ms</td></tr><tr><td><strong>512³</strong></td><td class="num">1,280,303</td><td class="num">0.95%</td><td class="num">15.0 ms</td><td class="num">34.4 ms</td><td class="num">0.6 ms</td></tr><tr><td><strong>1024³</strong></td><td class="num">5,148,906</td><td class="num">0.48%</td><td class="num">66.6 ms</td><td class="num">799.7 ms</td><td class="num">1.8 ms</td></tr></tbody>
+  </table></div>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-pipeline.webp" alt="Setup cost broken down by stage against grid resolution" loading="lazy"></div></figure>
+  <div class="adm adm-warn" style="margin-top:20px"><div class="adm-title">Setup dominates</div>
+  <p>Extraction is the cheap part. At 1024³ the operators run in single-digit
+  milliseconds while building the flood-fill structure takes close to a second — so if
+  you extract repeatedly from one mesh, build that structure once and reuse it. Note
+  also how the active cell count falls as a share of the dense grid with resolution:
+  the band tracks surface area, not volume.</p></div>
+</section>
+
+<section class="section wrap" style="border-bottom:none">
+  <div class="section-head">
+    <span class="kicker">Memory</span>
+    <h2>Why the grid stays sparse</h2>
+    <p>Measured grid storage against resolution, dense versus narrow-band.</p>
+  </div>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-memory.webp" alt="Grid storage against resolution, dense versus narrow-band" loading="lazy"></div></figure>
+</section>
 </main>
 <footer class="footer"><div class="footer-inner">
-  <span>Conquer3D v0.7.2 — MIT licensed</span>
+  <span>Conquer3D v0.7.3 — MIT licensed</span>
   <span class="spacer"></span>
   <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
   <a href="https://pypi.org/project/conquer3d/">PyPI</a>
@@ -95,6 +170,6 @@
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
   onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});"></script>
-<script src="assets/js/site.js"></script>
+<script src="assets/js/site.js?v=3b88bc2f79"></script>
 </body>
 </html>
