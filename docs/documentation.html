@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en" data-base="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation · Conquer3D</title>
+<meta name="description" content="Installation, core concepts, and worked examples for Conquer3D.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2376b900'/></svg>">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+  // Applied before first paint so the theme never flashes.
+  (function(){
+    try {
+      var s = localStorage.getItem('c3d-theme');
+      if (!s) s = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', s);
+    } catch(e) { document.documentElement.setAttribute('data-theme','dark'); }
+  })();
+</script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.2</span>
+  </a>
+  <nav class="nav-tabs"><a href="index.html" class="">Showcase</a><a href="documentation.html" class="active">Documentation</a><a href="api/index.html" class="">API Reference</a><a href="benchmarks.html" class="">Benchmarks</a><a href="about.html" class="">About</a></nav>
+  <div class="nav-right">
+    <button class="search-trigger" id="search-trigger" aria-label="Search documentation">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search</span><kbd>⌘K</kbd>
+    </button>
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle colour theme">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/KhoiDOO/conquer3d" aria-label="GitHub repository">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.6 4.7 18.6 5 18.6 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+    </a>
+  </div>
+</header>
+
+<main>
+<div class="wrap" style="padding-top:52px">
+<div class="page-head">
+  <div class="crumbs"><a href="index.html">Home</a> › Documentation</div>
+  <h1 style="font-family:var(--sans)">Documentation</h1>
+  <p class="sub">Installing Conquer3D, the concepts it is built on, and worked examples.</p>
+</div>
+</div>
+
+<section class="section wrap" style="padding-top:8px">
+  <div class="section-head"><span class="kicker">Installation</span><h2>Three ways in</h2></div>
+  <div class="grid grid-3">
+    <div class="card"><span class="idx">Recommended</span><h3>PyPI</h3>
+      <pre><code>pip install -U conquer3d</code></pre>
+      <p>Prebuilt CUDA wheels are attached to each GitHub release for Python 3.10–3.14
+      against PyTorch 2.8 and 2.11 (CUDA 12.8).</p></div>
+    <div class="card"><span class="idx">Zero setup</span><h3>Docker</h3>
+      <pre><code>docker pull kohido/conquer3d:latest\ndocker run --rm --gpus all -it kohido/conquer3d:latest bash</code></pre>
+      <p>Ships a complete CUDA and PyTorch environment; nothing to compile.</p></div>
+    <div class="card"><span class="idx">Development</span><h3>From source</h3>
+      <pre><code>git clone https:<span class="tok-com">//github.com/KhoiDOO/conquer3d.git\ncd conquer3d\npip install -e . --no-build-isolation</span></code></pre>
+      <p>Needs CUDA $\ge$ 12.0, a matching PyTorch, and <code>pybind11-stubgen</code>
+      (the build regenerates <code>_C.pyi</code>).</p></div>
+  </div>
+
+  <div class="adm adm-note" style="margin-top:26px"><div class="adm-title">Requires a GPU</div>
+  <p>Importing <code>conquer3d</code> loads the compiled <code>_C</code> extension at module
+  scope, so a CUDA-capable device and a matching PyTorch build are required. The one exception
+  is <code>conquer3d.ops.dpsr</code>, which is pure PyTorch and will also run on CPU.</p></div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head"><span class="kicker">Concepts</span>
+    <h2>How the pieces fit</h2>
+    <p>Most pipelines follow the same three steps: build a grid, evaluate a field on it,
+    then extract a surface from the field.</p></div>
+  <div class="grid grid-3">
+    <div class="card"><span class="idx">Step 1</span><h3>Build a grid</h3>
+      <p>A grid is a vertex array <code>(V, 3)</code> plus a voxel array <code>(N, 8)</code> of
+      corner indices. <code>create_voxel_grid</code> makes a dense one;
+      <code>create_voxel_grid_from_tmesh</code> makes a narrow band hugging a surface, which is
+      what makes $1024^3$ tractable.</p></div>
+    <div class="card"><span class="idx">Step 2</span><h3>Evaluate a field</h3>
+      <p>Any <code>(V,)</code> scalar per grid vertex works — an analytic SDF, a network output,
+      or distances queried from a mesh via <code>TriangleMesh.query_points</code>. The
+      <code>sign_mode</code> argument selects how inside/outside is decided (ray parity, winding
+      number, flood fill).</p></div>
+    <div class="card"><span class="idx">Step 3</span><h3>Extract a surface</h3>
+      <p>Pick the extractor that matches the geometry: <code>dmc</code> for throughput and
+      manifold output, <code>dc</code> for sharp CAD creases, <code>mca</code> when face
+      ambiguities matter, <code>marching_tetrahedra</code> for unstructured domains.</p></div>
+  </div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">Architecture</span>
+    <h2>Seven tiers, 1018 documented symbols</h2>
+    <p>The library is a stack, and the reference mirrors it exactly. It does not stop at the
+    Python surface: it descends through the pybind11 bindings and host dispatchers into the
+    CUDA kernels, the device helpers they call, and the inline math those are built from.</p>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tier</th><th>Layer</th><th>Symbols</th><th>Documented</th><th>Coverage</th></tr></thead>
+    <tbody><tr><td><span class="badge badge-t1">T1</span></td><td><strong>Python API</strong></td><td class="num">159</td><td class="num">159</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t2">T2</span></td><td><strong>Native Bindings</strong></td><td class="num">151</td><td class="num">151</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t3">T3</span></td><td><strong>Host Dispatchers</strong></td><td class="num">437</td><td class="num">437</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t4">T4</span></td><td><strong>CUDA Kernels</strong></td><td class="num">109</td><td class="num">109</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t5">T5</span></td><td><strong>Device Helpers</strong></td><td class="num">69</td><td class="num">69</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t6">T6</span></td><td><strong>Math Primitives</strong></td><td class="num">65</td><td class="num">65</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr><tr><td><span class="badge badge-t7">T7</span></td><td><strong>Lookup Tables</strong></td><td class="num">28</td><td class="num">28</td><td style="min-width:150px"><div class="cov"><span class="cov-bar"><span class="cov-fill" style="width:100%"></span></span><span>100%</span></div></td></tr></tbody>
+  </table></div>
+  <p style="margin-top:18px"><a class="btn" href="api/index.html">Browse the API Reference →</a></p>
+</section>
+
+<section class="section wrap">
+  <div class="section-head"><span class="kicker">Examples</span><h2>Worked pipelines</h2></div>
+
+  <h3 style="margin-bottom:12px">Sharp CAD extraction with Dual Contouring</h3>
+  <p class="prose" style="margin-bottom:14px">Dual Contouring places one vertex per voxel by
+  minimising a quadratic error function over the surface normals, which is what preserves
+  mechanical edges that Marching Cubes rounds off.</p>
+  <pre><code><span class="tok-kw">import</span> torch
+<span class="tok-kw">from</span> conquer3d.data.assets <span class="tok-kw">import</span> Fandisk
+<span class="tok-kw">from</span> conquer3d.data_structure <span class="tok-kw">import</span> TriangleMesh, create_voxel_grid_from_tmesh
+<span class="tok-kw">from</span> conquer3d.ops <span class="tok-kw">import</span> dc
+
+v, f, _ = <span class="tok-fn">Fandisk</span>().<span class="tok-fn">get</span>()
+tmesh = <span class="tok-fn">TriangleMesh</span>(v.<span class="tok-fn">cuda</span>(), f.<span class="tok-fn">cuda</span>().<span class="tok-fn">int</span>())
+
+<span class="tok-com"># Sparse narrow-band grid plus exact CAD face normals (normal_mode=0)</span>
+grid_vertices, voxels, _, grid_normals = <span class="tok-fn">create_voxel_grid_from_tmesh</span>(
+    grid_min=[-<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, grid_max=[<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, res=[<span class="tok-num">256</span>] * <span class="tok-num">3</span>,
+    tmesh=tmesh, pad=<span class="tok-num">1</span>, return_normals=<span class="tok-kw">True</span>, normal_mode=<span class="tok-num">0</span>,
+)
+
+<span class="tok-com"># Signed distances via GPU flood fill</span>
+tmesh.<span class="tok-fn">build_flood_fill_data</span>([-<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, [<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, [<span class="tok-num">256</span>] * <span class="tok-num">3</span>)
+_, _, _, sdfs = tmesh.<span class="tok-fn">query_points</span>(grid_vertices, return_sdf=<span class="tok-kw">True</span>, sign_mode=<span class="tok-num">3</span>)
+
+<span class="tok-com"># Jacobi-SVD QEF solve preserves sharp creases</span>
+verts, faces = <span class="tok-fn">dc</span>(grid_vertices, voxels, sdfs, grid_normals=grid_normals, iso=<span class="tok-num">0.0</span>)
+</code></pre>
+
+  <h3 style="margin:34px 0 12px">Spatial queries against a mesh</h3>
+  <pre><code>query_pts = torch.<span class="tok-fn">randn</span>((100_000, <span class="tok-num">3</span>), device=<span class="tok-str">&quot;cuda&quot;</span>)
+
+query_ids, closest_tri_ids, projected_pts, sdfs = tmesh.<span class="tok-fn">query_points</span>(
+    query_pts, return_sdf=<span class="tok-kw">True</span>, return_prj_pts=<span class="tok-kw">True</span>, sign_mode=<span class="tok-num">0</span>,
+)
+</code></pre>
+
+
+  <div class="adm adm-warn" style="margin-top:26px"><div class="adm-title">Differentiability</div>
+  <p>Gradient support is per-operator. <code>diff_marching_cubes</code>,
+  <code>marching_tetrahedra</code>, <code>diff_marching_tetrahedra_grid</code> and
+  <code>dpsr</code> propagate gradients today. The autograd wrappers for <code>dmc</code>,
+  <code>dc</code> and <code>mca</code> are present in the source but currently commented out,
+  so those three are forward-only — check the operator's API page before relying on
+  <code>.backward()</code>.</p></div>
+</section>
+
+<section class="section wrap" style="border-bottom:none">
+  <div class="section-head"><span class="kicker">Next</span><h2>Where to go</h2></div>
+  <div class="grid grid-3">
+    <div class="card"><h3><a href="api/index.html">API Reference →</a></h3>
+      <p>Every symbol, from the Python surface down to individual CUDA kernels.</p></div>
+    <div class="card"><h3><a href="about.html">About &amp; References →</a></h3>
+      <p>The papers, books, and implementations this library is built on.</p></div>
+    <div class="card"><h3><a href="https://github.com/KhoiDOO/conquer3d/issues">Issues →</a></h3>
+      <p>Bug reports and feature requests on GitHub.</p></div>
+  </div>
+</section>
+</main>
+<footer class="footer"><div class="footer-inner">
+  <span>Conquer3D v0.7.2 — MIT licensed</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
+  <a href="https://pypi.org/project/conquer3d/">PyPI</a>
+  <a href="https://hub.docker.com/r/kohido/conquer3d">Docker</a>
+  <a href="about.html">References</a>
+</div></footer>
+
+<div class="lightbox" id="lightbox">
+  <button class="lightbox-close" aria-label="Close">✕</button>
+  <img src="" alt="">
+  <div class="lightbox-cap"></div>
+</div>
+
+<div class="search-modal" id="search-modal">
+  <div class="search-box">
+    <input id="search-input" type="text" placeholder="Search the API — functions, kernels, classes…" autocomplete="off" spellcheck="false">
+    <div class="search-results" id="search-results"></div>
+  </div>
+</div>
+
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});"></script>
+<script src="assets/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en" data-base="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conquer3D · GPU-Accelerated Differentiable Geometry</title>
+<meta name="description" content="A GPU-native toolbox for isosurface extraction, spatial acceleration, and differentiable geometry, written in CUDA and exposed as PyTorch tensors.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2376b900'/></svg>">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+  // Applied before first paint so the theme never flashes.
+  (function(){
+    try {
+      var s = localStorage.getItem('c3d-theme');
+      if (!s) s = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', s);
+    } catch(e) { document.documentElement.setAttribute('data-theme','dark'); }
+  })();
+</script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.2</span>
+  </a>
+  <nav class="nav-tabs"><a href="index.html" class="active">Showcase</a><a href="documentation.html" class="">Documentation</a><a href="api/index.html" class="">API Reference</a><a href="benchmarks.html" class="">Benchmarks</a><a href="about.html" class="">About</a></nav>
+  <div class="nav-right">
+    <button class="search-trigger" id="search-trigger" aria-label="Search documentation">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search</span><kbd>⌘K</kbd>
+    </button>
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle colour theme">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/KhoiDOO/conquer3d" aria-label="GitHub repository">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.6 4.7 18.6 5 18.6 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+    </a>
+  </div>
+</header>
+
+<section class="hero">
+  <canvas id="hero-canvas"></canvas>
+  <div class="hero-fade"></div>
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <span class="eyebrow"><span class="pulse"></span> v0.7.2 · CUDA 12 · PyTorch 2.x</span>
+      <h1>Differentiable geometry<br><span class="grad">at kernel speed</span></h1>
+      <p class="lede">A GPU-native toolbox for isosurface extraction, spatial acceleration, and
+      volumetric conversion — written in CUDA, exposed as PyTorch tensors, and documented down
+      to the individual kernel.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="documentation.html">Get started</a>
+        <a class="btn" href="api/index.html">API Reference</a>
+        <a class="btn" href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
+      </div>
+    </div>
+    <div class="hero-card">
+      <div class="hero-card-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        &nbsp;dual_marching_cubes.py</div>
+      <pre><code><span class="tok-kw">import</span> torch
+<span class="tok-kw">from</span> conquer3d.data_structure <span class="tok-kw">import</span> create_voxel_grid
+<span class="tok-kw">from</span> conquer3d.ops <span class="tok-kw">import</span> dmc
+
+grid_vertices, voxels, _ = <span class="tok-fn">create_voxel_grid</span>(
+    grid_min=[-<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, grid_max=[<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>,
+    res=[<span class="tok-num">64</span>, <span class="tok-num">64</span>, <span class="tok-num">64</span>], device=<span class="tok-str">&quot;cuda&quot;</span>,
+)
+
+sdf = (torch.<span class="tok-fn">norm</span>(grid_vertices, dim=-<span class="tok-num">1</span>) - <span class="tok-num">0.6</span>).<span class="tok-fn">requires_grad_</span>(<span class="tok-kw">True</span>)
+verts, faces = <span class="tok-fn">dmc</span>(grid_vertices, voxels, sdf, iso=<span class="tok-num">0.0</span>)
+
+verts.<span class="tok-fn">sum</span>().<span class="tok-fn">backward</span>()          <span class="tok-com"># gradients flow into the field</span>
+</code></pre>
+    </div>
+  </div>
+</section>
+
+<main>
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">What it is</span>
+    <h2>A GPU-native geometry toolbox, built for gradients</h2>
+    <p>Conquer3D implements computational geometry directly in CUDA and exposes it through
+    PyTorch tensors — so meshing, querying and voxelising happen where your data already
+    lives.</p>
+  </div>
+  <div class="grid grid-2"><div class="card"><span class="idx">01</span><h3>Surfaces from fields</h3><p>Turn any scalar field — an analytic SDF, a network output, distances queried from a mesh — into a watertight, 2-manifold surface. Sharp CAD creases survive when you want them to, and ambiguous cells resolve without pinch points.</p></div><div class="card"><span class="idx">02</span><h3>Gradients that flow through</h3><p>Extraction is part of the training step, not a preprocessing stage around it. Where an analytical backward exists, gradients propagate from the mesh back into the field and the colours defined on it.</p></div><div class="card"><span class="idx">03</span><h3>Built for the memory you have</h3><p>Narrow-band voxelisation never allocates the dense volume, so a $1024^3$ extraction fits on a single consumer GPU. Spatial hierarchies keep queries cache-coherent instead of chasing pointers.</p></div><div class="card"><span class="idx">04</span><h3>Everything stays on device</h3><p>Every operator consumes and produces PyTorch tensors in place. No host round-trip, no format conversion, no copying a mesh back to the CPU just to measure or voxelise it.</p></div></div>
+</section>
+
+
+<section class="section wrap">
+  <div class="section-head">
+    <span class="kicker">Qualitative results</span>
+    <h2>What the operators actually produce</h2>
+    <p>Every figure below is real output, generated from the bundled benchmark assets by
+    <code>docs/_figures/make_figures.py</code> and regenerated whenever the library changes.
+    Click any figure to enlarge.</p>
+  </div>
+  <div class="fig-grid" style="grid-template-columns:minmax(0,1fr)"><figure class="fig"><div class="fig-media"><img src="assets/img/fig-algorithms.webp" alt="Four extractors, one field" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Comparison</span><h3>Four extractors, one field</h3><p>The source mesh leads, then the same signed distance field on a 64³ grid meshed four ways. Marching Cubes and its asymptotic variant round the crease into a staircase; Dual Contouring&#x27;s QEF solve snaps the vertex onto the feature; Dual Marching Cubes holds manifold topology throughout. The close crop is placed automatically at the point where MC and DC disagree most, measured with the library&#x27;s own Chamfer distance.</p><div class="fig-meta"><span>Fandisk</span><span>ground truth first</span><span>64³ grid</span><span>auto-located crop</span></div></figcaption></figure><figure class="fig"><div class="fig-media"><img src="assets/img/fig-resolution.webp" alt="Detail is a resolution dial" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Scaling</span><h3>Detail is a resolution dial</h3><p>Dual Marching Cubes on the Armadillo across five grid resolutions, against the source mesh. Face count grows from 12,076 to 3,317,336 while the extraction code and the field are unchanged — the armour plating only resolves once the grid is fine enough to carry it, and by 1024³ the extraction is visually indistinguishable from the 99,976-face original.</p><div class="fig-meta"><span>Armadillo</span><span>ground truth first</span><span>64³ → 1024³</span><span>12k → 3.3M faces</span></div></figcaption></figure><figure class="fig"><div class="fig-media"><img src="assets/img/fig-sign-modes.webp" alt="Six ways to decide inside" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Robustness</span><h3>Six ways to decide inside</h3><p>One axial slice through the Bimba bust, signed by each of the six available modes and contoured at zero. Ray parity misclassifies a scatter of points in the upper left where rays graze the surface; pseudonormals and winding numbers are clean; the flood-fill modes quantise the boundary to their occupancy grid. Most libraries give you exactly one of these.</p><div class="fig-meta"><span>Bimba</span><span>sign_mode 0–5</span><span>320² slice</span></div></figcaption></figure></div>
+  <div class="fig-grid" style="margin-top:18px"><figure class="fig"><div class="fig-media"><img src="assets/img/fig-curvature.webp" alt="Differential geometry, on device" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Analysis</span><h3>Differential geometry, on device</h3><p>Per-vertex curvature over 134,345 vertices of the Igea bust, computed with the cotangent Laplace–Beltrami operator and mixed Voronoi areas, shown beside the unshaded source. Mean curvature and the first principal curvature pick out the eyelids, lips and braid detail that Gaussian curvature alone flattens.</p><div class="fig-meta"><span>Igea</span><span>ground truth first</span><span>134,345 vertices</span><span>cotangent operator</span></div></figcaption></figure><figure class="fig"><div class="fig-media"><img src="assets/img/fig-normal-modes.webp" alt="The field Dual Contouring solves against" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Normals</span><h3>The field Dual Contouring solves against</h3><p>Dual Contouring is only as sharp as the normals it is given. Against the source mesh: exact CAD face normals produce a clean surface; smooth vertex normals soften it; deriving normals from the SDF gradient introduces the visible speckle that a QEF then faithfully reproduces.</p><div class="fig-meta"><span>RockerArm</span><span>ground truth first</span><span>normal_mode 0/1/2</span><span>224³ grid</span></div></figcaption></figure><figure class="fig"><div class="fig-media"><img src="assets/img/fig-sdf-slices.webp" alt="The field behind the surface" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Fields</span><h3>The field behind the surface</h3><p>Three axial slices of the signed distance field around Spot, with the zero level set drawn in green. This is the quantity every extractor in the library consumes — the mesh is just where this field crosses zero.</p><div class="fig-meta"><span>Spot</span><span>3 slices</span><span>zero level set</span></div></figcaption></figure><figure class="fig"><div class="fig-media"><img src="assets/img/fig-memory.webp" alt="Why the grid stays sparse" loading="lazy" decoding="async"></div><figcaption class="fig-body"><span class="fig-kicker">Memory</span><h3>Why the grid stays sparse</h3><p>Measured grid storage against resolution. Narrow-band voxelisation visits only the cells the surface actually crosses, so cost tracks surface area rather than volume: at 512³ that is 58.6 MB instead of 5.6 GB, and it is the reason high-resolution extraction fits on a single consumer GPU at all.</p><div class="fig-meta"><span>Fandisk</span><span>32³ → 512³</span><span>96× smaller at 512³</span></div></figcaption></figure></div>
+</section>
+
+
+<section class="section wrap" style="border-bottom:none">
+  <div class="section-head">
+    <span class="kicker">Get started</span>
+    <h2>Install and extract a surface</h2>
+  </div>
+  <div class="grid grid-2">
+    <div><pre><code>pip install -U conquer3d</code></pre>
+      <p style="color:var(--fg-mid);font-size:.9rem">Prebuilt CUDA wheels are published per
+      release for Python 3.10–3.14 against PyTorch 2.8 and 2.11. Building from source needs
+      CUDA $\ge$ 12.0.</p>
+      <p><a class="btn" href="documentation.html">Read the guide →</a>
+         <a class="btn" href="benchmarks.html">See the numbers →</a></p>
+    </div>
+    <div><pre><code><span class="tok-kw">import</span> torch
+<span class="tok-kw">from</span> conquer3d.data_structure <span class="tok-kw">import</span> create_voxel_grid
+<span class="tok-kw">from</span> conquer3d.ops <span class="tok-kw">import</span> dmc
+
+grid_vertices, voxels, _ = <span class="tok-fn">create_voxel_grid</span>(
+    grid_min=[-<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>, grid_max=[<span class="tok-num">1.0</span>] * <span class="tok-num">3</span>,
+    res=[<span class="tok-num">64</span>, <span class="tok-num">64</span>, <span class="tok-num">64</span>], device=<span class="tok-str">&quot;cuda&quot;</span>,
+)
+
+sdf = (torch.<span class="tok-fn">norm</span>(grid_vertices, dim=-<span class="tok-num">1</span>) - <span class="tok-num">0.6</span>).<span class="tok-fn">requires_grad_</span>(<span class="tok-kw">True</span>)
+verts, faces = <span class="tok-fn">dmc</span>(grid_vertices, voxels, sdf, iso=<span class="tok-num">0.0</span>)
+
+verts.<span class="tok-fn">sum</span>().<span class="tok-fn">backward</span>()          <span class="tok-com"># gradients flow into the field</span>
+</code></pre></div>
+  </div>
+</section>
+</main>
+<footer class="footer"><div class="footer-inner">
+  <span>Conquer3D v0.7.2 — MIT licensed</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
+  <a href="https://pypi.org/project/conquer3d/">PyPI</a>
+  <a href="https://hub.docker.com/r/kohido/conquer3d">Docker</a>
+  <a href="about.html">References</a>
+</div></footer>
+
+<div class="lightbox" id="lightbox">
+  <button class="lightbox-close" aria-label="Close">✕</button>
+  <img src="" alt="">
+  <div class="lightbox-cap"></div>
+</div>
+
+<div class="search-modal" id="search-modal">
+  <div class="search-box">
+    <input id="search-input" type="text" placeholder="Search the API — functions, kernels, classes…" autocomplete="off" spellcheck="false">
+    <div class="search-results" id="search-results"></div>
+  </div>
+</div>
+
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});"></script>
+<script src="assets/js/site.js"></script>
+</body>
+</html>

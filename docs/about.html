@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-base="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About · Conquer3D</title>
+<meta name="description" content="Motivation, architecture, and the research Conquer3D builds on.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2376b900'/></svg>">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+  // Applied before first paint so the theme never flashes.
+  (function(){
+    try {
+      var s = localStorage.getItem('c3d-theme');
+      if (!s) s = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', s);
+    } catch(e) { document.documentElement.setAttribute('data-theme','dark'); }
+  })();
+</script>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html">
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.2</span>
+  </a>
+  <nav class="nav-tabs"><a href="index.html" class="">Showcase</a><a href="documentation.html" class="">Documentation</a><a href="api/index.html" class="">API Reference</a><a href="benchmarks.html" class="">Benchmarks</a><a href="about.html" class="active">About</a></nav>
+  <div class="nav-right">
+    <button class="search-trigger" id="search-trigger" aria-label="Search documentation">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search</span><kbd>⌘K</kbd>
+    </button>
+    <button class="icon-btn" id="theme-toggle" aria-label="Toggle colour theme">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/KhoiDOO/conquer3d" aria-label="GitHub repository">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.6 4.7 18.6 5 18.6 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+    </a>
+  </div>
+</header>
+
+<main>
+<div class="wrap" style="padding-top:52px">
+<div class="page-head">
+  <div class="crumbs"><a href="index.html">Home</a> › About</div>
+  <h1 style="font-family:var(--sans)">About Conquer3D</h1>
+  <p class="sub">Why it exists, how it is built, and what it stands on.</p>
+</div>
+</div>
+
+<section class="section wrap" style="padding-top:8px">
+  <div class="section-head"><span class="kicker">Motivation</span>
+  <h2>A PhD side project, built to learn by building</h2></div>
+  <div class="prose" style="font-size:1rem;max-width:70ch">
+    <p>Conquer3D is written during my PhD in Vision and Graphics. It exists to learn 3D
+    differentiable geometry and graphics from the ground up — by implementing the
+    algorithms rather than calling them.</p>
+    <p>Almost every component runs on the GPU: isosurface extraction, spatial acceleration
+    structures, volumetric conversion, and the geometric primitives underneath them are
+    written as CUDA kernels and exposed as PyTorch tensors.</p>
+  </div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head"><span class="kicker">Bibliography</span><h2>Research papers</h2>
+  <p>The algorithms implemented here come from published work. These are the primary sources.</p></div>
+  <div class="grid grid-2"><div class="card"><span class="idx">Paper</span><h3>Maximizing parallelism in the construction of BVHs, octrees, and k-d trees</h3><p>Karras, Tero · Proceedings of the Fourth ACM SIGGRAPH / Eurographics Conference on High-Performance Graphics · 2012</p></div><div class="card"><span class="idx">Paper</span><h3><a href="https://doi.org/10.1080/10867651.1997.10487472">A fast triangle-triangle intersection test</a></h3><p>M&quot;oller, Tomas · J. Graph. Tools · 1997</p></div><div class="card"><span class="idx">Paper</span><h3><a href="https://doi.org/10.1145/1198555.1198746">Fast, minimum storage ray/triangle intersection</a></h3><p>M&quot;oller, Tomas, Trumbore, Ben · ACM SIGGRAPH 2005 Courses · 2005</p></div><div class="card"><span class="idx">Paper</span><h3><a href="http://dx.doi.org/10.1007/978-3-662-05105-4_2">Discrete Differential-Geometry Operators for Triangulated 2-Manifolds</a></h3><p>Meyer, Mark et al. · Visualization and Mathematics III · 2003</p></div><div class="card"><span class="idx">Paper</span><h3><a href="https://doi.org/10.1109/TVCG.2020.3016645">Surface Remeshing: A Systematic Literature Review of Methods and Research Directions</a></h3><p>Khan, Dawar et al. · IEEE Transactions on Visualization and Computer Graphics · 2022</p></div><div class="card"><span class="idx">Paper</span><h3><a href="https://doi.org/10.1109/TVCG.2008.60">Edge Transformations for Improving Mesh Quality of Marching Cubes</a></h3><p>Dietrich, Carlos A. et al. · IEEE Transactions on Visualization and Computer Graphics · 2009</p></div></div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head"><span class="kicker">Bibliography</span><h2>Books</h2></div>
+  <div class="grid grid-2"><div class="card"><span class="idx">Book</span><h3><a href="http://dx.doi.org/10.1201/b10688">Polygon Mesh Processing</a></h3><p>Botsch, Mario et al. · A K Peters/CRC Press · 2010</p></div><div class="card"><span class="idx">Book</span><h3><a href="http://dx.doi.org/10.1201/b15025">Isosurfaces: Geometry, Topology, and Algorithms</a></h3><p>Wenger, Rephael · A K Peters/CRC Press · 2013</p></div></div>
+</section>
+
+<section class="section wrap">
+  <div class="section-head"><span class="kicker">Bibliography</span><h2>Blog posts &amp; repositories</h2>
+  <p>Practical GPU traversal and construction writing, and the open-source implementations this
+  project learned from.</p></div>
+  <div class="grid grid-3"><div class="card"><span class="idx">Blog</span><h3><a href="https://developer.nvidia.com/blog/thinking-parallel-part-i-collision-detection-gpu/">Thinking Parallel, Part I: Collision Detection on the GPU</a></h3><p style="font-size:.8rem;word-break:break-all">https://developer.nvidia.com/blog/thinking-parallel-part-i-collision-detection-gpu/</p></div><div class="card"><span class="idx">Blog</span><h3><a href="https://developer.nvidia.com/blog/thinking-parallel-part-ii-tree-traversal-gpu/">Thinking Parallel, Part II: Tree Traversal on the GPU</a></h3><p style="font-size:.8rem;word-break:break-all">https://developer.nvidia.com/blog/thinking-parallel-part-ii-tree-traversal-gpu/</p></div><div class="card"><span class="idx">Blog</span><h3><a href="https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/">Thinking Parallel, Part III: Tree Construction on the GPU</a></h3><p style="font-size:.8rem;word-break:break-all">https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/NVIDIA/cuBQL">cuBQL</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/NVIDIA/cuBQL</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/ingowald/cudaKDTree">cudaKDTree</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/ingowald/cudaKDTree</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/NVIDIAGameWorks/kaolin">Kaolin</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/NVIDIAGameWorks/kaolin</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/facebookresearch/pytorch3d">Pytorch3D</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/facebookresearch/pytorch3d</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://www.open3d.org/">Open3D</a></h3><p style="font-size:.8rem;word-break:break-all">https://www.open3d.org/</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/mikedh/trimesh">trimesh</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/mikedh/trimesh</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/AlexandreBinninger/TetWeave/tree/main">TetWeave</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/AlexandreBinninger/TetWeave/tree/main</p></div><div class="card"><span class="idx">Repository</span><h3><a href="https://github.com/PhiliGuertler/ManifoldDMC">ManifoldDMC</a></h3><p style="font-size:.8rem;word-break:break-all">https://github.com/PhiliGuertler/ManifoldDMC</p></div></div>
+</section>
+
+<section class="section wrap" style="border-bottom:none">
+  <div class="section-head"><span class="kicker">Citation</span><h2>Using Conquer3D in your work</h2></div>
+  <pre><code>@software{conquer3d,
+  title  = {Conquer3D: GPU-Accelerated Differentiable Geometry <span class="tok-kw">and</span> Spatial Computing},
+  author = {Do, Hoang Khoi},
+  year   = {<span class="tok-num">2025</span>},
+  url    = {https:<span class="tok-com">//github.com/KhoiDOO/conquer3d},</span>
+  version = {<span class="tok-num">0.7</span>.<span class="tok-num">2</span>}
+}</code></pre>
+  <p class="prose">Released under the MIT License.</p>
+</section>
+</main>
+<footer class="footer"><div class="footer-inner">
+  <span>Conquer3D v0.7.2 — MIT licensed</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
+  <a href="https://pypi.org/project/conquer3d/">PyPI</a>
+  <a href="https://hub.docker.com/r/kohido/conquer3d">Docker</a>
+  <a href="about.html">References</a>
+</div></footer>
+
+<div class="lightbox" id="lightbox">
+  <button class="lightbox-close" aria-label="Close">✕</button>
+  <img src="" alt="">
+  <div class="lightbox-cap"></div>
+</div>
+
+<div class="search-modal" id="search-modal">
+  <div class="search-box">
+    <input id="search-input" type="text" placeholder="Search the API — functions, kernels, classes…" autocomplete="off" spellcheck="false">
+    <div class="search-results" id="search-results"></div>
+  </div>
+</div>
+
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});"></script>
+<script src="assets/js/site.js"></script>
+</body>
+</html>
