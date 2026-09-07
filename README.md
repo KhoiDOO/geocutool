@@ -27,6 +27,13 @@
 
 ---
 
+> [!NOTE]
+> The API documentation and the [documentation website](https://khoidoo.github.io/conquer3d/)
+> were written with [Claude](https://claude.ai/code). The library itself — every CUDA kernel,
+> data structure and operator — is the author's own work.
+
+---
+
 ## 🌟 Overview
 
 **Conquer3D** is an ultra-fast, GPU-native computational geometry and differentiable spatial computing library engineered in **PyTorch and CUDA**. Designed from the ground up for 3D computer vision, generative AI, neural surface reconstruction, and differentiable rendering, **Conquer3D** delivers up to **~1.0 Billion faces/second** isosurface extraction, exact CAD sharp crease preservation, and memory-efficient spatial acceleration structures.
