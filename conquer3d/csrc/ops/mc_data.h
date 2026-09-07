@@ -1,14 +1,40 @@
 #ifndef MC_DATA_H
 #define MC_DATA_H
 
+/**
+ * @file mc_data.h
+ * @brief Constant lookup tables for classical Marching Cubes (Lorensen & Cline, 1987).
+ *
+ * @details Surface topology inside a voxel is decided entirely by the sign pattern of its
+ * eight corners, giving $2^8 = 256$ cases. These tables convert that 8-bit case index into
+ * the set of intersected edges and the triangles spanning them, so the kernels perform no
+ * branching search at runtime -- only indexed reads from constant memory, which broadcasts
+ * uniformly across a warp.
+ *
+ * Corner bit $i$ is set when corner $i$ lies inside the isosurface.
+ */
+
 #include <cuda_runtime.h>
 
+/**
+ * @brief Local corner index pair spanned by each of the 12 cube edges.
+ *
+ * @details `edgeConnection[e]` gives the two corner indices $(a, b)$ whose segment forms
+ * edge $e$. Vertex positions are found by interpolating the scalar field between them.
+ */
 static __constant__ int edgeConnection[12][2] = {
     {0,1}, {1,2}, {2,3}, {3,0},
     {4,5}, {5,6}, {6,7}, {7,4},
     {0,4}, {1,5}, {2,6}, {3,7}
 };
 
+/**
+ * @brief 12-bit mask of edges intersected by the isosurface, per corner-sign case.
+ *
+ * @details Bit $e$ of `edgeTable[c]` is set when edge $e$ is bipolar -- its two corners lie
+ * on opposite sides of the isolevel -- and therefore carries a surface vertex. A value of
+ * `0x0` means the cell is entirely inside or outside and emits nothing.
+ */
 static __constant__ int edgeTable[256] = {
     0x0, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
     0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
@@ -43,6 +69,14 @@ static __constant__ int edgeTable[256] = {
     0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
     0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0};
 
+/**
+ * @brief Exclusive prefix scan of emitted triangle vertices across all 256 cases.
+ *
+ * @details Holds 257 entries so that the vertex count of case $c$ is
+ * `trinumTable[c + 1] - trinumTable[c]`, and the triangle count is that difference divided
+ * by three. Precomputing the scan lets a kernel size its output allocation without a
+ * separate counting pass.
+ */
 static __constant__ int trinumTable[257] = {
     0, 0, 3, 6, 12, 15, 21, 27, 36, 39, 45, 51, 60, 66, 75, 84, 90, 93, 99, 105, 114,
     120, 129, 138, 150, 156, 165, 174, 186, 195, 207, 219, 228, 231, 237, 243, 252, 258, 267, 276, 288,
@@ -58,6 +92,13 @@ static __constant__ int trinumTable[257] = {
     2163, 2169, 2181, 2184, 2193, 2205, 2217, 2232, 2244, 2259, 2268, 2280, 2292, 2307, 2322, 2328, 2337, 2349, 2355, 2358,
     2364, 2373, 2382, 2388, 2397, 2409, 2415, 2418, 2427, 2433, 2445, 2448, 2454, 2457, 2460, 2460};
 
+/**
+ * @brief Edge triples forming the triangles of each corner-sign case.
+ *
+ * @details Each row lists edge indices in groups of three, one group per triangle, wound
+ * consistently for outward-facing normals and terminated by `-1`. At most five triangles
+ * fit in a cell, so 15 entries plus the terminator bound the row width.
+ */
 static __constant__ int triTable[256][16] = {
     {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
     {0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},

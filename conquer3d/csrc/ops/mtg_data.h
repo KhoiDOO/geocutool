@@ -1,13 +1,28 @@
 #ifndef MTG_DATA_H
 #define MTG_DATA_H
 
+/**
+ * @file mtg_data.h
+ * @brief Constant lookup tables for Marching Tetrahedra over a regular cubic grid.
+ *
+ * @details Each voxel is split into six tetrahedra sharing the cube's main diagonal, which
+ * inherits Marching Tetrahedra's freedom from topological ambiguity while still operating on
+ * a structured grid. The decomposition is consistent across neighbouring cells, so extracted
+ * surfaces meet without cracks.
+ */
+
 #include <cuda_runtime.h>
 #include <stdint.h>
 
 namespace mtg {
 
-// A voxel is divided into 6 tetrahedra.
-// Each tetrahedron is defined by 4 corner indices of the voxel (0-7).
+/**
+ * @brief Decomposition of one voxel into 6 tetrahedra, as cube corner indices.
+ *
+ * @details All six tetrahedra share the $0 \rightarrow 6$ main diagonal. Neighbouring
+ * voxels use the same split, which is what keeps the extracted surface watertight across
+ * cell boundaries.
+ */
 __constant__ int mtg_tets[6][4] = {
     {0, 2, 3, 7},
     {0, 2, 6, 7},
@@ -18,6 +33,12 @@ __constant__ int mtg_tets[6][4] = {
 };
 
 // The 6 local edges of a tetrahedron, mapped to its 4 local vertices (0-3).
+/**
+ * @brief Local vertex pair spanned by each of the 6 tetrahedron edges.
+ *
+ * @details Indices are local to a tetrahedron (0-3), not to the voxel; map them through
+ * ::mtg_tets to reach cube corners.
+ */
 __constant__ int mtg_edgeConnection[6][2] = {
     {0, 1}, // Edge 0
     {0, 2}, // Edge 1
@@ -30,6 +51,11 @@ __constant__ int mtg_edgeConnection[6][2] = {
 // The triangles formed for each of the 16 cases of a tetrahedron.
 // Contains up to 2 triangles (6 edges), terminated by -1.
 // Winding is consistent so that normals point outward (towards >= iso).
+/**
+ * @brief Edge triples forming the triangles of each of the 16 tetrahedron sign cases.
+ *
+ * @details Up to two triangles per tetrahedron, `-1` terminated.
+ */
 __constant__ int mtg_triTable[16][7] = {
     {-1, -1, -1, -1, -1, -1, -1}, // 0x00
     { 0,  1,  2, -1, -1, -1, -1}, // 0x01
@@ -50,6 +76,9 @@ __constant__ int mtg_triTable[16][7] = {
 };
 
 // Number of triangles for each of the 16 cases.
+/**
+ * @brief Triangle count emitted by each of the 16 tetrahedron sign cases (0, 1 or 2).
+ */
 __constant__ int mtg_num_tris[16] = {
     0, 1, 1, 2, 1, 2, 2, 1,
     1, 2, 2, 1, 2, 1, 1, 0

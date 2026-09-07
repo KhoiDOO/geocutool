@@ -1,18 +1,49 @@
 #ifndef CONQUER3D_OPS_DMC_DATA_H
 #define CONQUER3D_OPS_DMC_DATA_H
 
+/**
+ * @file dmc_data.h
+ * @brief Constant topology tables for Dual Marching Cubes.
+ *
+ * @details Dual Marching Cubes decomposes each cell into independent contours and emits one
+ * dual vertex per contour rather than one per cell. Cells that Dual Contouring would collapse
+ * to a single vertex -- and thereby pinch -- instead receive several, which is what
+ * guarantees strictly 2-manifold output. The tables here encode both the cell-local topology
+ * and the full 256-case contour patterns.
+ */
+
 #include <cuda_runtime.h>
 
 namespace conquer3d {
 namespace ops {
 
+/**
+ * @brief Sentinel marking a Dual Marching Cubes case that needs runtime disambiguation.
+ *
+ * @details Stored in ::dmc_ambig_table in place of an equivalence-class representative. A
+ * cell carrying this value must have its face and interior connectivity resolved by the
+ * asymptotic decider before contours can be emitted.
+ */
 #define DMC_AMBIGUOUS 254
+
+/**
+ * @brief Sentinel marking an ambiguous classical Marching Cubes case.
+ *
+ * @details Shares the value of ::DMC_AMBIGUOUS so the two extraction paths can consult the
+ * same table without translating between sentinels.
+ */
 #define MC_AMBIGUOUS 254
 
 // 12 Edges in conquer3d CCW convention:
 // 0:(0,1), 1:(1,2), 2:(3,2), 3:(0,3) [Bottom -Z]
 // 4:(4,5), 5:(5,6), 6:(7,6), 7:(4,7) [Top +Z]
 // 8:(0,4), 9:(1,5), 10:(2,6), 11:(3,7) [Vertical +Z]
+/**
+ * @brief Local corner index pair spanned by each of the 12 cube edges.
+ *
+ * @details Uses the Conquer3D counter-clockwise convention: edges 0-3 bound the $-Z$ face,
+ * 4-7 the $+Z$ face, and 8-11 run vertically along $+Z$.
+ */
 static __constant__ int dmc_edge_corners[12][2] = {
     {0, 1}, {1, 2}, {3, 2}, {0, 3},
     {4, 5}, {5, 6}, {7, 6}, {4, 7},
@@ -20,6 +51,12 @@ static __constant__ int dmc_edge_corners[12][2] = {
 };
 
 // Relative coordinates (u, v, w) in [0, 1]^3 for 8 corners:
+/**
+ * @brief Unit-cube $(u, v, w)$ coordinates of each of the 8 voxel corners.
+ *
+ * @details Local parametric coordinates in $[0, 1]^3$, used to evaluate the trilinear field
+ * and its gradient inside a cell without reconstructing world positions.
+ */
 static __constant__ float dmc_corner_uvw[8][3] = {
     {0.0f, 0.0f, 0.0f}, // 0
     {1.0f, 0.0f, 0.0f}, // 1
@@ -31,7 +68,14 @@ static __constant__ float dmc_corner_uvw[8][3] = {
     {0.0f, 1.0f, 1.0f}  // 7
 };
 
-// Canonical topological Cartesian quadrant slot for each local edge ID e in [0, 11]
+/**
+ * @brief Cartesian quadrant slot assigned to each of the 12 local edges.
+ *
+ * @details Dual methods place vertices per edge rather than per cell, so each edge must map
+ * deterministically to one of four quadrant slots. Because adjacent cells agree on this
+ * mapping, the dual quad around a shared edge is assembled consistently from all four
+ * incident cells.
+ */
 static __constant__ int dmc_edge_quadrant[12] = {
     0, // e=0 (+X) -> slot 0
     3, // e=1 (+Y) -> slot 3
@@ -47,7 +91,14 @@ static __constant__ int dmc_edge_quadrant[12] = {
     3  // e=11 (+Z) -> slot 3
 };
 
-// Ambiguity table for 256 cube cases
+/**
+ * @brief Maps each corner-sign case to its topological equivalence class representative.
+ *
+ * @details Entries carrying the sentinel ::DMC_AMBIGUOUS (254) mark cases whose face or
+ * interior connectivity cannot be settled from corner signs alone and must be resolved at
+ * runtime by the asymptotic decider. All other cases index a canonical representative,
+ * collapsing the 256 configurations onto the far smaller set of distinct topologies.
+ */
 static __constant__ unsigned char dmc_ambig_table[256] = {
     0, // quitte: 0 <-> mc: 0, class representative: 0
     1, // quitte: 1 <-> mc: 1, class representative: 1
@@ -307,7 +358,15 @@ static __constant__ unsigned char dmc_ambig_table[256] = {
     255 // quitte: 255 <-> mc: 255, class representative: 0
 };
 
-// Marching Cubes polygon contours table for 256 cube cases (256 * 17 = 4352 bytes)
+/**
+ * @brief Packed contour patterns for all 256 corner-sign cases.
+ *
+ * @details A flat $256 \times 17$ byte array. Row $c$ begins at offset $17c$; its first
+ * entry is the number of contours in the cell, after which each contour is stored as a
+ * length followed by that many edge indices, with unused entries set to `-1`. Flattening
+ * keeps the whole table at 4352 bytes so it stays resident in constant memory and is
+ * broadcast to every thread in a warp at full speed.
+ */
 static __constant__ char dmc_r_pattern[4352] = {
     0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     1, 3, 0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -567,12 +626,23 @@ static __constant__ char dmc_r_pattern[4352] = {
     0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 };
 
-// Face definitions for on-the-fly asymptotic decider
-// 6 Faces: 0:-Z, 1:+Z, 2:-Y, 3:+Y, 4:-X, 5:+X
+/**
+ * @brief Bit-packed edge indices of each cube face, for the on-the-fly asymptotic decider.
+ *
+ * @details Face order is $-Z, +Z, -Y, +Y, -X, +X$. Each 16-bit word packs the face's four
+ * edge indices into 4-bit fields, so the decider unpacks a face with shifts and masks rather
+ * than an extra constant-memory read.
+ */
 static __constant__ unsigned short dmc_e_face[6] = {
     (unsigned short)291, (unsigned short)18277, (unsigned short)18696, (unsigned short)10859, (unsigned short)33719, (unsigned short)38305
 };
 
+/**
+ * @brief Bit-packed corner indices of each cube face, matching ::dmc_e_face ordering.
+ *
+ * @details Four 4-bit fields per word, giving the corners whose values the bilinear saddle
+ * evaluation needs when disambiguating a face.
+ */
 static __constant__ unsigned short dmc_v_face[6] = {
     (unsigned short)12576, (unsigned short)25717, (unsigned short)5380, (unsigned short)29538, (unsigned short)8292, (unsigned short)30001
 };
