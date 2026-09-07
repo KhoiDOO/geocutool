@@ -28,7 +28,7 @@ protected:
 
     torch::Tensor vertices;       ///< Vertex coordinates of shape [N, 3] (float32, CUDA).
     torch::Tensor vertex_normals; ///< Surface normals of shape [N, 3] (float32, CUDA).
-    std::optional<int> vertex_normals_mode = std::nullopt;
+    std::optional<int> vertex_normals_mode = std::nullopt; ///< Weighting used for the cached vertex normals: uniform, area, or angle.
     torch::Tensor vertex_colors;  ///< Per-vertex colors of shape [N, 3] (float32, CUDA).
     torch::Tensor vertex_degrees; ///< Discrete topological degrees of shape [N] (int32, CUDA).
 
@@ -38,22 +38,22 @@ protected:
     torch::Tensor triangle_areas;   ///< Individual face surface areas of shape [M] (float32, CUDA).
     torch::Tensor surface_area;     ///< Total integrated mesh surface area scalar.
 
-    std::optional<MeshBVH> bvh;
-    std::optional<torch::Tensor> flood_fill_mask = std::nullopt;
-    std::optional<std::vector<float>> flood_grid_min = std::nullopt;
-    std::optional<std::vector<float>> flood_grid_max = std::nullopt;
-    std::optional<std::vector<int64_t>> flood_grid_res = std::nullopt;
+    std::optional<MeshBVH> bvh; ///< Lazily built hierarchy over the mesh triangles.
+    std::optional<torch::Tensor> flood_fill_mask = std::nullopt; ///< Cached single-level flood fill occupancy labels.
+    std::optional<std::vector<float>> flood_grid_min = std::nullopt; ///< Lower corner of the grid the flood fill was computed on.
+    std::optional<std::vector<float>> flood_grid_max = std::nullopt; ///< Upper corner of the grid the flood fill was computed on.
+    std::optional<std::vector<int64_t>> flood_grid_res = std::nullopt; ///< Resolution of the grid the flood fill was computed on.
 
-    std::optional<torch::Tensor> cf_coarse_mask = std::nullopt;
-    std::optional<torch::Tensor> cf_boundary_lookup = std::nullopt;
-    std::optional<torch::Tensor> cf_fine_masks = std::nullopt;
-    std::optional<std::vector<int64_t>> cf_block_size = std::nullopt;
-    std::optional<std::vector<int64_t>> cf_coarse_res = std::nullopt;
+    std::optional<torch::Tensor> cf_coarse_mask = std::nullopt; ///< Coarse-level labels from the coarse-fine flood fill.
+    std::optional<torch::Tensor> cf_boundary_lookup = std::nullopt; ///< Dense coarse-index to boundary-slot lookup, -1 outside the boundary set.
+    std::optional<torch::Tensor> cf_fine_masks = std::nullopt; ///< Per-boundary-block fine voxel labels.
+    std::optional<std::vector<int64_t>> cf_block_size = std::nullopt; ///< Fine voxels per coarse block.
+    std::optional<std::vector<int64_t>> cf_coarse_res = std::nullopt; ///< Coarse grid resolution.
 
-    std::optional<bool> opt_edge_manifold;
-    std::optional<bool> opt_edge_manifold_w_boundary;
-    std::optional<bool> opt_vertex_manifold;
-    std::optional<bool> opt_self_intersected;
+    std::optional<bool> opt_edge_manifold; ///< Cached edge-manifoldness result, ignoring boundaries.
+    std::optional<bool> opt_edge_manifold_w_boundary; ///< Cached edge-manifoldness result, allowing boundaries.
+    std::optional<bool> opt_vertex_manifold; ///< Cached vertex-manifoldness result.
+    std::optional<bool> opt_self_intersected; ///< Cached self-intersection result.
 
     torch::Tensor vertex_lb_uniform;   ///< Uniform Laplace-Beltrami vector of shape [N, 3].
     torch::Tensor vertex_lb_cotangent; ///< Cotangent Laplace-Beltrami vector of shape [N, 3].
@@ -179,9 +179,26 @@ public:
         std::optional<std::vector<float>> grid_max = std::nullopt,
         std::optional<std::vector<int64_t>> res = std::nullopt,
         int connectivity = 6);
+    /**
+     * @brief Occupancy labels from the cached single-level flood fill.
+     * @return `(Rx, Ry, Rz)` int8 labels.
+     * @warning Requires build_flood_fill_data() to have been called.
+     */
     torch::Tensor get_flood_fill_mask();
+    /**
+     * @brief Lower corner of the grid the flood fill was computed on.
+     * @return `[x, y, z]`.
+     */
     std::vector<float> get_flood_grid_min();
+    /**
+     * @brief Upper corner of the grid the flood fill was computed on.
+     * @return `[x, y, z]`.
+     */
     std::vector<float> get_flood_grid_max();
+    /**
+     * @brief Resolution of the grid the flood fill was computed on.
+     * @return `[Rx, Ry, Rz]`.
+     */
     std::vector<int64_t> get_flood_grid_res();
 
     /**
@@ -193,10 +210,31 @@ public:
         std::optional<std::vector<int64_t>> res = std::nullopt,
         std::optional<std::vector<int64_t>> block_size = std::nullopt,
         int connectivity = 6);
+    /**
+     * @brief Coarse-level labels from the cached coarse-fine flood fill.
+     * @return `(Cx, Cy, Cz)` int8 labels.
+     * @warning Requires the coarse-fine flood fill to have been built.
+     */
     torch::Tensor get_cf_coarse_mask();
+    /**
+     * @brief Dense lookup from coarse index to boundary-block slot.
+     * @return `(Cx, Cy, Cz)` int32 indices, -1 where the block is not on the boundary.
+     */
     torch::Tensor get_cf_boundary_lookup();
+    /**
+     * @brief Per-boundary-block fine voxel labels.
+     * @return `(N, Bx, By, Bz)` int8 labels.
+     */
     torch::Tensor get_cf_fine_masks();
+    /**
+     * @brief Fine voxels per coarse block.
+     * @return `[Bx, By, Bz]`.
+     */
     std::vector<int64_t> get_cf_block_size();
+    /**
+     * @brief Coarse grid resolution.
+     * @return `[Cx, Cy, Cz]`.
+     */
     std::vector<int64_t> get_cf_coarse_res();
 
     /** @brief Returns colliding triangle index pairs $(N, 2)$. */
@@ -234,18 +272,58 @@ public:
 
     /** @brief Builds Compressed Sparse Row (CSR) edge-to-triangle incidence topology graph on GPU. */
     void compute_edges_to_triangle_map();
+    /**
+     * @brief The full edge-to-triangle connectivity map.
+     * @details Returns the unique edges together with the CSR offsets, counts and indices
+     * listing the triangles incident on each. Built on first use and cached.
+     * @return A tuple of (edges, offsets, counts, indices).
+     */
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> get_edges_to_triangle_map();
     
+    /**
+     * @brief Unique edges of the mesh.
+     * @return `(E, 2)` int32 vertex index pairs.
+     */
     torch::Tensor get_edges();
+    /**
+     * @brief CSR offsets of the edge-to-triangle map.
+     * @return `(E + 1,)` int32 offsets.
+     */
     torch::Tensor get_edge_to_triangle_offsets();
+    /**
+     * @brief Number of triangles incident on each edge.
+     * @return `(E,)` int32 counts; 1 marks a boundary edge and more than 2 a non-manifold one.
+     */
     torch::Tensor get_edge_to_triangle_counts();
+    /**
+     * @brief Flattened incident triangle indices of the edge map.
+     * @return `(sum(counts),)` int32 indices.
+     */
     torch::Tensor get_edge_to_triangle_indices();
 
     /** @brief Builds CSR vertex-to-triangle incidence topology graph on GPU. */
     void compute_vertices_to_triangle_map();
+    /**
+     * @brief The full vertex-to-triangle connectivity map.
+     * @details Returns the CSR offsets, counts and indices listing the triangles incident on
+     * each vertex. Built on first use and cached.
+     * @return A tuple of (offsets, counts, indices).
+     */
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> get_vertices_to_triangle_map();
+    /**
+     * @brief CSR offsets of the vertex-to-triangle map.
+     * @return `(V + 1,)` int32 offsets.
+     */
     torch::Tensor get_vertex_to_triangle_offsets();
+    /**
+     * @brief Number of triangles incident on each vertex.
+     * @return `(V,)` int32 counts.
+     */
     torch::Tensor get_vertex_to_triangle_counts();
+    /**
+     * @brief Flattened incident triangle indices of the vertex map.
+     * @return `(sum(counts),)` int32 indices.
+     */
     torch::Tensor get_vertex_to_triangle_indices();
 
     /** @brief Checks if every mesh edge is shared by at most 2 triangles (or exactly 2 if boundaries disallowed). */

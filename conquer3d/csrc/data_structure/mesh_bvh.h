@@ -30,7 +30,7 @@ class MeshBVH : public BVH
 {
 public:
     torch::Tensor winding_data; ///< Size: [2N - 1] * sizeof(WindingData) on device.
-    bool has_winding_data = false;
+    bool has_winding_data = false; ///< Whether build_winding_data() has been called.
 
     using BVH::BVH;
     using BVH::query;

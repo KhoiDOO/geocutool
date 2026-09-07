@@ -21,12 +21,26 @@
 
 namespace bvh
 {
+    /**
+     * @brief An axis-aligned box, as carried through the Thrust bounds reduction.
+     */
     struct Node {
-        float3 min_pt;
-        float3 max_pt;
+        float3 min_pt; ///< Lower corner.
+        float3 max_pt; ///< Upper corner.
     };
 
+    /**
+     * @brief Thrust binary functor merging two boxes into their union.
+     * @details Associative and commutative, as a parallel reduction requires, so the scene
+     * bounds can be computed in one `thrust::reduce` regardless of how the work is split.
+     */
     struct Reduce {
+        /**
+         * @brief Merges two boxes into their union.
+         * @param[in] a First box.
+         * @param[in] b Second box.
+         * @return The smallest box containing both.
+         */
         __device__ __forceinline__ Node operator()(const Node& a, const Node& b) const {
             Node res;
             aabb::compute_aabb_union(a.min_pt, a.max_pt, b.min_pt, b.max_pt, res.min_pt, res.max_pt);
@@ -34,12 +48,27 @@ namespace bvh
         }
     };
 
+    /**
+     * @brief Thrust unary functor turning a primitive index into its ::bvh::Node box.
+     * @details Fused with the reduction so the per-primitive boxes are never materialised as
+     * an intermediate array.
+     */
     struct Transform {
-        const float3* mins;
-        const float3* maxs;
+        const float3* mins; ///< Device array of primitive lower bounds.
+        const float3* maxs; ///< Device array of primitive upper bounds.
         
+        /**
+         * @brief Binds the functor to the primitive bounds arrays.
+         * @param[in] _mins Device array of primitive lower bounds.
+         * @param[in] _maxs Device array of primitive upper bounds.
+         */
         Transform(const float3* _mins, const float3* _maxs) : mins(_mins), maxs(_maxs) {}
 
+        /**
+         * @brief Loads one primitive's bounds as a ::bvh::Node.
+         * @param[in] idx Primitive index.
+         * @return The primitive's box.
+         */
         __device__ __forceinline__ Node operator()(const int& idx) const {
             Node node;
             node.min_pt = mins[idx];
@@ -48,6 +77,18 @@ namespace bvh
         }
     };
 
+    /**
+     * @brief Length of the common high-order bit prefix of two Morton codes.
+     * @details The similarity measure Karras's hierarchy construction is built on: the longer
+     * the shared prefix, the closer two primitives lie in space. Equal codes fall back to
+     * comparing indices, which breaks ties deterministically and keeps the emitted tree
+     * well-formed when several primitives share a cell.
+     * @param[in] num_objects Number of primitives, used for the bounds check.
+     * @param[in] morton_codes Device array of sorted Morton codes.
+     * @param[in] i First index.
+     * @param[in] j Second index; out-of-range values return $-1$ to terminate a range scan.
+     * @return Shared prefix length in bits, or $-1$ when @p j is out of range.
+     */
     __device__ __forceinline__ int common_prefix(
         const int num_objects,
         const uint32_t* morton_codes,
@@ -69,7 +110,25 @@ namespace bvh
         return __clz(key_i ^ key_j);
     }
 
-    __global__ void compute_morton_codes_kernel(
+/**
+ * @brief Assigns a Morton code to each primitive from its AABB centroid.
+ * @details One thread per primitive. The centroid is normalised into the scene bounds and
+ * interleaved into a 30-bit Morton code. Sorting primitives by this code places spatial
+ * neighbours adjacently, which is the precondition for Karras's hierarchy emission --
+ * the tree structure is read directly off the sorted code sequence.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] aabb_mins Device array of $N$ AABB lower bounds.
+ * @param[in] aabb_maxs Device array of $N$ AABB upper bounds.
+ * @param[in] scene_min Lower bound of the whole scene, used to normalise centroids.
+ * @param[in] scene_max Upper bound of the whole scene.
+ * @param[out] morton_codes Device array of $N$ Morton codes.
+ * @param[out] object_ids Device array of $N$ identity indices, permuted by the sort that
+ *     follows so results can be mapped back to the caller's ordering.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Primitives whose centroids fall within $2^{-10}$ of the scene extent share a code.
+ * Duplicates are handled during hierarchy emission by falling back to index comparison.
+ */
+__global__ void compute_morton_codes_kernel(
         const uint32_t num_objects,
         const float3* __restrict__ aabb_mins,
         const float3* __restrict__ aabb_maxs,
@@ -102,7 +161,24 @@ namespace bvh
         object_ids[idx] = idx; 
     }
 
-    __global__ void karras_emit_hierarchy_kernel(
+/**
+ * @brief Builds the internal-node hierarchy from sorted Morton codes (Karras, 2012).
+ * @details One thread per internal node, of which there are exactly $N - 1$. Each thread
+ * determines its node's range by comparing common prefix lengths with its neighbours,
+ * locates the split by binary search, and writes its two children -- with no
+ * synchronisation between threads at all. That independence is the whole point of the
+ * Karras construction: the entire hierarchy is emitted in a single parallel pass.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] morton_codes Device array of $N$ Morton codes in ascending order.
+ * @param[out] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[out] bvh_parents Device array of $2N - 1$ parent indices for the bottom-up pass.
+ * @note Launched over $N - 1$ threads; internal nodes occupy indices $[0, N-1)$ and leaves
+ * $[N-1, 2N-1)$.
+ * @warning Requires @p morton_codes to be sorted ascending. Unsorted input produces a
+ * structurally valid but spatially meaningless tree, which degrades queries to a linear
+ * scan rather than failing outright.
+ */
+__global__ void karras_emit_hierarchy_kernel(
         const int num_objects,
         const uint32_t* __restrict__ morton_codes,
         int2* __restrict__ bvh_children,
@@ -160,7 +236,29 @@ namespace bvh
         bvh_parents[right] = idx;
     }
 
-    __global__ void bottom_up_aabb_kernel(
+/**
+ * @brief Propagates bounding boxes from leaves to the root.
+ * @details One thread per leaf. Each seeds its own AABB, then walks towards the root
+ * merging bounds. At every internal node an `atomicCAS` flag decides which of the two
+ * arriving threads continues: the first exits, the second -- knowing both children are now
+ * final -- merges and proceeds. Exactly one thread therefore reaches the root, and the
+ * whole refit completes in one launch with no global barrier.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] object_ids Device array mapping sorted leaf order to original indices.
+ * @param[in] in_aabb_mins Device array of $N$ primitive AABB lower bounds.
+ * @param[in] in_aabb_maxs Device array of $N$ primitive AABB upper bounds.
+ * @param[in] bvh_parents Device array of $2N - 1$ parent indices.
+ * @param[in] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[out] bvh_aabb_mins Device array of $2N - 1$ node lower bounds.
+ * @param[out] bvh_aabb_maxs Device array of $2N - 1$ node upper bounds.
+ * @param[in,out] atomic_flags Device array of $N - 1$ visit flags; must be zeroed before
+ *     launch.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning @p atomic_flags must be cleared between builds. Stale flags let the first
+ * thread through at a node whose sibling has not finished, producing bounds that silently
+ * omit part of the subtree.
+ */
+__global__ void bottom_up_aabb_kernel(
         const int num_objects,
         const int* __restrict__ object_ids,
         const float3* __restrict__ in_aabb_mins,
@@ -290,7 +388,32 @@ namespace bvh
         cudaDeviceSynchronize();
     }
 
-    __global__ void query_bvh_kernel(
+/**
+ * @brief Reports every BVH primitive whose AABB overlaps each query box.
+ * @details One thread per query box, descending the hierarchy with a private stack and
+ * emitting a (query, object) pair for each overlapping leaf. Pairs are appended to a shared
+ * buffer through an atomic counter.
+ * @param[in] num_queries Number of query boxes $Q$.
+ * @param[in] num_objects Number of primitives in the tree $N$.
+ * @param[in] query_mins Device array of $Q$ query AABB lower bounds.
+ * @param[in] query_maxs Device array of $Q$ query AABB upper bounds.
+ * @param[in] bvh_aabb_mins Device array of $2N - 1$ node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of $2N - 1$ node upper bounds.
+ * @param[in] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[in] object_ids Device array mapping leaves to original primitive indices.
+ * @param[out] out_query_ids Device array receiving the query index of each pair.
+ * @param[out] out_object_ids Device array receiving the primitive index of each pair.
+ * @param[in,out] hit_counter Device counter, atomically incremented per pair.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries held in local
+ * memory. A deeply unbalanced hierarchy can overflow it; Morton ordering keeps the tree
+ * shallow enough in practice, but pathological input remains a risk.
+ * @warning Output slots are claimed with a single atomic on @p hit_counter, so pair
+ * ordering is nondeterministic between runs. Writes stop once @p max_capacity is
+ * reached; compare the final counter against it to detect truncation.
+ */
+__global__ void query_bvh_kernel(
         const uint32_t num_queries,
         const uint32_t num_objects,
         const float3* __restrict__ query_mins,
@@ -381,7 +504,29 @@ namespace bvh
         );
     }
 
-    __global__ void query_self_bvh_kernel(
+/**
+ * @brief Reports every overlapping pair of primitives within one BVH.
+ * @details One thread per leaf, querying the tree that contains it. Self-pairs are
+ * skipped, and a pair is emitted only when the querying index is the lower of the two, so
+ * each unordered pair is reported exactly once rather than twice.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] bvh_aabb_mins Device array of $2N - 1$ node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of $2N - 1$ node upper bounds.
+ * @param[in] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[in] object_ids Device array mapping leaves to original primitive indices.
+ * @param[out] out_query_ids Device array receiving the first index of each pair.
+ * @param[out] out_object_ids Device array receiving the second index of each pair.
+ * @param[in,out] hit_counter Device counter, atomically incremented per pair.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries held in local
+ * memory. A deeply unbalanced hierarchy can overflow it; Morton ordering keeps the tree
+ * shallow enough in practice, but pathological input remains a risk.
+ * @warning Output slots are claimed with a single atomic on @p hit_counter, so pair
+ * ordering is nondeterministic between runs. Writes stop once @p max_capacity is
+ * reached; compare the final counter against it to detect truncation.
+ */
+__global__ void query_self_bvh_kernel(
         const uint32_t num_objects,
         const float3* __restrict__ bvh_aabb_mins,
         const float3* __restrict__ bvh_aabb_maxs,
@@ -465,7 +610,33 @@ namespace bvh
         );
     }
 
-    __global__ void query_ray_bvh_kernel(
+/**
+ * @brief Reports every primitive whose AABB a ray enters.
+ * @details One thread per ray, using the Kay-Kajiya slab test at each node and descending
+ * only into children the ray actually meets. This is a broad-phase pass: it returns
+ * candidates whose bounding boxes are hit, not confirmed surface intersections, so an
+ * exact test against the primitives is still required downstream.
+ * @param[in] num_queries Number of rays $Q$.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] ray_origins Device array of $Q$ ray origins.
+ * @param[in] ray_dirs Device array of $Q$ ray directions.
+ * @param[in] bvh_aabb_mins Device array of $2N - 1$ node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of $2N - 1$ node upper bounds.
+ * @param[in] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[in] object_ids Device array mapping leaves to original primitive indices.
+ * @param[out] out_query_ids Device array receiving the ray index of each hit.
+ * @param[out] out_object_ids Device array receiving the primitive index of each hit.
+ * @param[in,out] hit_counter Device counter, atomically incremented per hit.
+ * @param[in] max_capacity Capacity of the output arrays.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries held in local
+ * memory. A deeply unbalanced hierarchy can overflow it; Morton ordering keeps the tree
+ * shallow enough in practice, but pathological input remains a risk.
+ * @warning Output slots are claimed with a single atomic on @p hit_counter, so pair
+ * ordering is nondeterministic between runs. Writes stop once @p max_capacity is
+ * reached; compare the final counter against it to detect truncation.
+ */
+__global__ void query_ray_bvh_kernel(
         const uint32_t num_queries,
         const uint32_t num_objects,
         const float3* __restrict__ ray_origins,
@@ -553,7 +724,30 @@ namespace bvh
         );
     }
 
-    __global__ void query_point_bvh_kernel(
+/**
+ * @brief Finds the primitive whose AABB is nearest to each query point.
+ * @details One thread per query, tracking the best squared distance found so far and
+ * pruning any subtree whose bound already exceeds it. Unlike the other query kernels this
+ * one writes a single result per query at a fixed index, so it needs no atomics and its
+ * output is deterministic.
+ * @param[in] num_queries Number of query points $Q$.
+ * @param[in] num_objects Number of primitives $N$.
+ * @param[in] query_points Device array of $Q$ coordinates.
+ * @param[in] bvh_aabb_mins Device array of $2N - 1$ node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of $2N - 1$ node upper bounds.
+ * @param[in] bvh_children Device array of $N - 1$ child index pairs.
+ * @param[in] object_ids Device array mapping leaves to original primitive indices.
+ * @param[out] out_query_ids Device array of $Q$ query indices.
+ * @param[out] out_object_ids Device array of $Q$ nearest primitive indices, $-1$ if none.
+ * @param[out] out_distances Device array of $Q$ squared distances to the nearest AABB.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Distances are to the bounding box, not the primitive surface; a box is only a
+ * lower bound on the true distance.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries held in local
+ * memory. A deeply unbalanced hierarchy can overflow it; Morton ordering keeps the tree
+ * shallow enough in practice, but pathological input remains a risk.
+ */
+__global__ void query_point_bvh_kernel(
         const uint32_t num_queries,
         const uint32_t num_objects,
         const float3* __restrict__ query_points,

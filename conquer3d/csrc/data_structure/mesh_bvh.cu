@@ -12,7 +12,24 @@
 
 namespace mesh_bvh
 {
-    __global__ void filter_self_intersections_kernel(
+/**
+ * @brief Narrow-phase exact triangle-triangle intersection over candidate pairs.
+ * @details One thread per candidate pair produced by the BVH broad phase. Pairs sharing a
+ * vertex or an edge are discarded first -- adjacent triangles always touch and are not
+ * self-intersections -- and the remainder go through the Moller triangle-triangle test.
+ * Survivors are appended to a compacted output through an atomic counter.
+ * @param[in] num_pairs Number of candidate pairs.
+ * @param[in] query_ids Device array of first triangle indices.
+ * @param[in] object_ids Device array of second triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] out_query_ids Device array receiving confirmed first indices.
+ * @param[out] out_object_ids Device array receiving confirmed second indices.
+ * @param[in,out] valid_counter Device counter, atomically incremented per confirmed pair.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Output order is nondeterministic because slots are claimed by atomics.
+ */
+__global__ void filter_self_intersections_kernel(
         const int num_pairs,
         const int64_t *query_ids,
         const int64_t *object_ids,
@@ -51,6 +68,10 @@ namespace mesh_bvh
         }
     }
 
+    /**
+     * @brief Launches exact triangle-triangle filtering over BVH candidate pairs.
+     * @details Host wrapper; discards adjacent pairs and applies the Moller test to the rest.
+     */
     void filter_self_intersections(
         const int num_pairs,
         const int64_t *query_ids,
@@ -75,7 +96,29 @@ namespace mesh_bvh
             valid_counter);
     }
 
-    __global__ void filter_ray_triangle_intersections_kernel(
+/**
+ * @brief Narrow-phase exact ray-triangle intersection over candidate pairs.
+ * @details One thread per candidate pair from the broad phase, applying the
+ * Moller-Trumbore test. Confirmed hits are compacted atomically, optionally carrying the
+ * intersection point and ray parameter.
+ * @param[in] num_pairs Number of candidate pairs.
+ * @param[in] query_ids Device array of ray indices.
+ * @param[in] object_ids Device array of triangle indices.
+ * @param[in] ray_origins Device array of ray origins.
+ * @param[in] ray_dirs Device array of ray directions.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] out_query_ids Device array receiving confirmed ray indices.
+ * @param[out] out_object_ids Device array receiving confirmed triangle indices.
+ * @param[out] out_intersect_pts Device array of intersection points.
+ * @param[out] out_distances Device array of ray parameters, when requested.
+ * @param[in] return_distance Whether distances are written.
+ * @param[in,out] valid_counter Device counter, atomically incremented per hit.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Hits are emitted unordered, so they are not sorted along the ray. Sort by
+ * distance if the nearest hit is required.
+ */
+__global__ void filter_ray_triangle_intersections_kernel(
         const int num_pairs,
         const int64_t *query_ids,
         const int64_t *object_ids,
@@ -116,6 +159,10 @@ namespace mesh_bvh
         }
     }
 
+    /**
+     * @brief Launches exact ray-triangle filtering over BVH candidate pairs.
+     * @details Host wrapper applying the Moller-Trumbore test to broad-phase candidates.
+     */
     void filter_ray_triangle_intersections(
         const int num_pairs,
         const int64_t *query_ids,
@@ -150,6 +197,25 @@ namespace mesh_bvh
             valid_counter);
     }
 
+    /**
+     * @brief Determines inside/outside by counting ray crossings.
+     * @details Casts a ray from the query point and counts how many triangles it crosses: an
+     * odd count means inside. Robust to inconsistent winding, since only the number of
+     * crossings matters, but sensitive to rays that graze an edge or vertex and are counted
+     * ambiguously.
+     * @param[in] p Query point.
+     * @param[in] best_tri_id Nearest triangle, used to pick a well-conditioned ray direction.
+     * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+     * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+     * @param[in] bvh_children Device array of BVH child index pairs.
+     * @param[in] object_ids Device array mapping leaves to triangle indices.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @param[in] num_objects Number of triangles.
+     * @return $-1$ inside, $+1$ outside.
+     * @warning Uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory.
+     * @warning Requires a watertight mesh; a hole lets the ray escape and flips the parity.
+     */
     __device__ __forceinline__ float compute_sign_ray_parity(
         const float3 &p,
         const int best_tri_id,
@@ -221,6 +287,17 @@ namespace mesh_bvh
         return (hit_count % 2 == 1) ? -1.0f : 1.0f;
     }
 
+    /**
+     * @brief Signed solid angle a triangle subtends at a point.
+     * @details Evaluated with the Van Oosterom-Strackee formula, whose `atan2` form stays
+     * accurate for the small angles that dominate a distant summation. This is the per-triangle
+     * term of the generalised winding number.
+     * @param[in] p Viewpoint.
+     * @param[in] a First triangle vertex.
+     * @param[in] b Second triangle vertex.
+     * @param[in] c Third triangle vertex.
+     * @return Signed solid angle in steradians; the sign follows the winding.
+     */
     __device__ __forceinline__ float compute_solid_angle_tri(float3 p, float3 a, float3 b, float3 c) {
         float3 a_v = a - p;
         float3 b_v = b - p;
@@ -235,6 +312,28 @@ namespace mesh_bvh
         return 2.0f * atan2f(num, den);
     }
 
+    /**
+     * @brief Generalised winding number, evaluated hierarchically.
+     * @details Sums the solid angles subtended by the mesh at the query point. For a closed
+     * surface the total is $4\pi$ inside and $0$ outside, and it degrades gracefully rather
+     * than failing on meshes with holes or self-intersections -- which is what makes it the
+     * robust choice where ray parity breaks down. Subtrees far enough away relative to their
+     * size are approximated by their precomputed ::WindingData aggregate instead of being
+     * descended, controlled by an accuracy scale.
+     * @param[in] p Query point.
+     * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+     * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+     * @param[in] bvh_children Device array of BVH child index pairs.
+     * @param[in] object_ids Device array mapping leaves to triangle indices.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @param[in] winding_data Device array of per-node winding aggregates.
+     * @param[in] num_objects Number of triangles.
+     * @return Winding number; near 1 inside a closed surface, near 0 outside.
+     * @warning Uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory.
+     * @warning Cost grows as the accuracy scale tightens, since fewer subtrees can be
+     * approximated. This is the most expensive sign mode.
+     */
     __device__ __forceinline__ float compute_fast_winding_number(
         const float3 &p,
         const float3 *bvh_aabb_mins,
@@ -298,6 +397,25 @@ namespace mesh_bvh
         return total_omega * 0.07957747154f; // 1.0f / (4.0f * PI)
     }
 
+    /**
+     * @brief Determines inside/outside from the angle-weighted pseudonormal.
+     * @details Compares the direction from the closest surface point to the query against the
+     * pseudonormal of whichever feature -- face, edge, or vertex -- the closest point landed
+     * on. Using angle-weighted normals at edges and vertices is what makes the test exact
+     * rather than merely approximate near creases, and it needs no ray casting or summation,
+     * making it the cheapest sign mode by a wide margin.
+     * @param[in] p Query point.
+     * @param[in] best_pt Closest point on the surface.
+     * @param[in] best_tri_id Triangle containing @p best_pt.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     * @param[in] pseudonormal_vertices Device array of angle-weighted vertex pseudonormals.
+     * @param[in] pseudonormal_edges Device array of edge pseudonormals.
+     * @param[in] pseudonormal_faces Device array of face normals.
+     * @return $-1$ inside, $+1$ outside.
+     * @warning Valid only for a watertight, consistently wound mesh. On an open or
+     * inconsistently oriented surface the sign flips unpredictably.
+     */
     __device__ __forceinline__ float compute_pseudonormal_sign(
         const float3 &p,
         const float3 &best_pt,
@@ -367,7 +485,42 @@ namespace mesh_bvh
         return (maths::dot(p - best_pt, N) >= 0.0f) ? 1.0f : -1.0f;
     }
 
-    __global__ void query_point_mesh_bvh_kernel(
+/**
+ * @brief Finds the closest point on the mesh to each query, with an optional sign.
+ * @details One thread per query. The BVH is descended with a running nearest distance that
+ * prunes any subtree whose bound already exceeds it, and the exact closest point on each
+ * surviving triangle is computed by barycentric projection.
+ *
+ * Sign determination is selectable because no single method suits every mesh: angle-weighted
+ * pseudonormals are exact for watertight input and nearly free, generalised winding numbers
+ * tolerate holes and self-intersections at the cost of the hierarchical ::WindingData
+ * traversal, and flood-fill lookup handles the rest. The choice is the caller's
+ * `sign_mode`.
+ *
+ * @param[in] num_queries Number of query points.
+ * @param[in] num_objects Number of triangles.
+ * @param[in] query_points Device array of query coordinates.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in] winding_data Device array of per-node winding aggregates, or `nullptr`.
+ * @param[in] pseudonormal_vertices Device array of angle-weighted vertex pseudonormals.
+ * @param[in] pseudonormal_edges Device array of edge pseudonormals.
+ * @param[in] pseudonormal_faces Device array of face normals.
+ * @param[out] out_query_ids Device array of query indices.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Distances are unsigned unless a sign mode is selected; the sign convention is
+ * negative inside.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ * @warning Pseudonormal signing assumes a watertight, consistently oriented mesh. On open
+ * or inconsistently wound surfaces the sign flips unpredictably -- prefer winding numbers
+ * or flood fill there.
+ */
+__global__ void query_point_mesh_bvh_kernel(
         const int num_queries,
         const int num_objects,
         const float3 *__restrict__ query_points,
@@ -542,6 +695,11 @@ namespace mesh_bvh
         out_distances[q_idx] = dist;
     }
 
+    /**
+     * @brief Launches closest-point queries against the mesh, with an optional sign.
+     * @details Host wrapper. The sign mode selects between pseudonormals, generalised winding
+     * numbers, and flood-fill lookup, trading cost against tolerance of imperfect meshes.
+     */
     void query_point_mesh_bvh(const int num_queries,
         const int num_objects,
         const float3 *query_points,
@@ -607,7 +765,30 @@ namespace mesh_bvh
             cf_coarse_dims);
     }
 
-    __global__ void bottom_up_winding_data_kernel(
+/**
+ * @brief Aggregates generalised winding number data from leaves to the root.
+ * @details One thread per leaf, seeding its triangle's area, area-weighted centroid and
+ * normal, then merging upwards. As in the AABB refit, an `atomicCAS` flag at each internal
+ * node lets only the second arriving thread continue, so exactly one reaches the root and
+ * the whole aggregation completes in a single launch.
+ *
+ * The stored aggregates are what make winding number evaluation hierarchical: a distant
+ * subtree can be approximated by its summary instead of being descended triangle by
+ * triangle.
+ *
+ * @param[in] num_objects Number of triangles.
+ * @param[in] object_ids Device array mapping sorted leaf order to triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] bvh_parents Device array of parent indices.
+ * @param[in] bvh_children Device array of child index pairs.
+ * @param[out] winding_data Device array of per-node ::WindingData aggregates.
+ * @param[in,out] atomic_flags Device array of visit flags; must be zeroed before launch.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning @p atomic_flags must be cleared between builds, or a node may be merged before
+ * both children are final.
+ */
+__global__ void bottom_up_winding_data_kernel(
         const int num_objects,
         const int *__restrict__ object_ids,
         const float3 *__restrict__ vertices,
@@ -693,6 +874,10 @@ namespace mesh_bvh
         }
     }
 
+    /**
+     * @brief Launches the hierarchical winding-number aggregation.
+     * @details Host wrapper; must run before winding-number sign determination can be used.
+     */
     void bottom_up_winding_data(
         const int num_objects,
         const int *object_ids,
@@ -717,7 +902,27 @@ namespace mesh_bvh
             winding_data,
             thrust::raw_pointer_cast(atomic_flags.data()));
     }
-    __global__ void query_voxel_mesh_bvh_kernel(
+/**
+ * @brief Tests whether each query box is intersected by any triangle.
+ * @details One thread per box. The BVH prunes candidates and surviving triangles go through
+ * the Akenine-Moller separating-axis test. Traversal stops at the first confirmed hit --
+ * the answer is a boolean, so there is nothing to gain from continuing.
+ * @param[in] num_queries Number of query boxes.
+ * @param[in] num_objects Number of triangles.
+ * @param[in] query_mins Device array of box lower bounds.
+ * @param[in] query_maxs Device array of box upper bounds.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[out] out_intersect Device array of per-box boolean results.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void query_voxel_mesh_bvh_kernel(
         const int num_queries,
         const int num_objects,
         const float3 *__restrict__ query_mins,
@@ -776,6 +981,10 @@ namespace mesh_bvh
         out_intersect[q_idx] = is_intersect;
     }
 
+    /**
+     * @brief Launches box-versus-mesh overlap tests.
+     * @details Host wrapper over the separating-axis test.
+     */
     void query_voxel_mesh_bvh(
         const int num_queries,
         const int num_objects,
@@ -806,7 +1015,29 @@ namespace mesh_bvh
             out_intersect);
     }
 
-    __global__ void count_active_voxels_mesh_bvh_kernel(
+/**
+ * @brief Counts the grid voxels the mesh surface passes through.
+ * @details Sizing pass for narrow-band voxelisation. One thread per voxel of the virtual
+ * grid, testing its box against the mesh and atomically incrementing a global count. Only
+ * the count is produced here, so the host can allocate exactly the right buffer before the
+ * collection pass -- the dense volume is never materialised.
+ * @param[in] res Per-axis voxel resolution.
+ * @param[in] grid_min World coordinate of the grid's lower corner.
+ * @param[in] voxel_size Per-axis voxel dimensions.
+ * @param[in] num_objects Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in,out] active_counter Device counter of active voxels.
+ * @note Launched over one thread per grid cell; indices are `int64_t` because a $1024^3$
+ * grid overflows 32-bit addressing.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void count_active_voxels_mesh_bvh_kernel(
         const int3 res,
         const float3 grid_min,
         const float3 voxel_size,
@@ -883,7 +1114,29 @@ namespace mesh_bvh
         }
     }
 
-    __global__ void collect_active_voxels_mesh_bvh_kernel(
+/**
+ * @brief Writes the linear indices of every voxel the mesh surface passes through.
+ * @details The collection pass matching the counting kernel, repeating the same
+ * intersection test and appending surviving indices through an atomic counter.
+ * @param[in] res Per-axis voxel resolution.
+ * @param[in] grid_min World coordinate of the grid's lower corner.
+ * @param[in] voxel_size Per-axis voxel dimensions.
+ * @param[in] num_objects Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] bvh_aabb_mins Device array of BVH node lower bounds.
+ * @param[in] bvh_aabb_maxs Device array of BVH node upper bounds.
+ * @param[in] bvh_children Device array of BVH child index pairs.
+ * @param[in] object_ids Device array mapping leaves to triangle indices.
+ * @param[in,out] active_counter Device counter, atomically incremented per emission.
+ * @param[out] out_active_ids Device array receiving linear voxel indices.
+ * @note Launched over one thread per grid cell, with `int64_t` indexing.
+ * @warning Emission order is nondeterministic. Sort the result if a canonical ordering is
+ * needed -- downstream extraction generally expects sorted voxel ids.
+ * @warning Traversal uses a per-thread stack of `BVH_STACK_SIZE` entries in local memory;
+ * a pathologically unbalanced hierarchy can overflow it.
+ */
+__global__ void collect_active_voxels_mesh_bvh_kernel(
         const int3 res,
         const float3 grid_min,
         const float3 voxel_size,
@@ -962,6 +1215,11 @@ namespace mesh_bvh
         }
     }
 
+    /**
+     * @brief Launches the counting pass of narrow-band voxelisation.
+     * @details Host wrapper producing only a count, so the caller can size its buffer exactly
+     * without ever materialising the dense volume.
+     */
     void count_active_voxels_mesh_bvh(
         const int3 res,
         const float3 grid_min,
@@ -993,6 +1251,11 @@ namespace mesh_bvh
             (unsigned long long *)active_counter);
     }
 
+    /**
+     * @brief Launches the collection pass of narrow-band voxelisation.
+     * @details Host wrapper writing the active voxel indices.
+     * @warning Emission order is nondeterministic; sort if a canonical order is needed.
+     */
     void collect_active_voxels_mesh_bvh(
         const int3 res,
         const float3 grid_min,

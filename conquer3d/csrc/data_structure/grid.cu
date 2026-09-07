@@ -9,7 +9,34 @@
 
 namespace grid {
 
-    __global__ void get_active_voxel_ids_from_depth_kernel(
+/**
+ * @brief Back-projects a depth map into the voxel indices its surface touches.
+ * @details One thread per pixel. Each unprojects its depth sample through the inverse
+ * intrinsics into camera space, transforms to world space, and quantises the result to a
+ * voxel index -- carving a surface band directly out of a depth image without ever
+ * allocating the dense volume. With @p activate_neighbor set, the $3 \times 3 \times 3$
+ * neighbourhood is activated too, widening the band so later extraction has samples on
+ * both sides of the surface.
+ *
+ * @param[in] num_pixels Number of depth samples $W \times H$.
+ * @param[in] depth_image Row-major depth buffer.
+ * @param[in] c2w Camera-to-world transform.
+ * @param[in] intrinsics_inv Inverse camera intrinsics.
+ * @param[in] image_width Depth image width in pixels.
+ * @param[in] image_height Depth image height in pixels.
+ * @param[in] grid_min World coordinate of the grid's lower corner.
+ * @param[in] grid_max World coordinate of the grid's upper corner.
+ * @param[in] res Per-axis voxel resolution.
+ * @param[out] out_voxel_ids Device array receiving activated linear voxel indices.
+ * @param[in,out] valid_counter Device counter, atomically incremented per emission.
+ * @param[in] activate_neighbor Whether to also activate the surrounding 26 voxels.
+ * @param[in] trunc_margin Band half-width in world units.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Pixels with non-positive depth are treated as missing and skipped.
+ * @warning Output order is nondeterministic because slots are claimed by atomics, and the
+ * same voxel may be emitted by many pixels. Callers must sort and deduplicate.
+ */
+__global__ void get_active_voxel_ids_from_depth_kernel(
         const int num_pixels,
         const float* depth_image,
         const float4x4 c2w,
@@ -112,7 +139,22 @@ namespace grid {
         );
     }
 
-    __global__ void quantize_vertices_to_voxel_ids_kernel(
+/**
+ * @brief Maps each vertex to the linear index of the voxel containing it.
+ * @details One thread per vertex, computing $\lfloor (\mathbf{v} - \mathbf{g}_{min}) /
+ * \mathbf{s} \rfloor$ and flattening the result in $x$-major order. Vertices outside the
+ * grid are dropped rather than clamped, so out-of-bounds geometry cannot fold onto the
+ * boundary and create phantom occupancy.
+ * @param[in] vertices Device array of `num_vertices` coordinates.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in] grid_min World coordinate of the grid's lower corner.
+ * @param[in] grid_spacing Per-axis voxel size.
+ * @param[in] num_cells Per-axis cell counts.
+ * @param[out] out_voxel_ids Device array of `num_vertices` linear voxel indices.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Indices are `int64_t`; a $1024^3$ grid exceeds the 32-bit range.
+ */
+__global__ void quantize_vertices_to_voxel_ids_kernel(
         const float3* __restrict__ vertices,
         int num_vertices,
         float3 grid_min,
@@ -189,7 +231,21 @@ namespace grid {
         return active_voxel_ids.masked_select(is_contained);
     }
 
-    __global__ void create_voxel_cloud_corners_kernel(
+/**
+ * @brief Expands each voxel centre into its eight corner coordinates.
+ * @details One thread per voxel centre, writing eight corners at a fixed stride so the
+ * output is a dense `(N, 8, 3)` array requiring no compaction. Corner order follows the
+ * library's counter-clockwise convention, matching the topology tables the extraction
+ * kernels index into.
+ * @param[in] vertices Device array of `num_vertices` voxel centre coordinates.
+ * @param[in] num_vertices Number of voxel centres.
+ * @param[in] voxel_spacing Per-axis voxel size; corners sit half a spacing from the centre.
+ * @param[out] out_corners Device array of `num_vertices * 8` corner coordinates.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Corners shared between neighbouring voxels are duplicated; deduplicate downstream
+ * if a welded vertex set is required.
+ */
+__global__ void create_voxel_cloud_corners_kernel(
         const float3* __restrict__ vertices,
         int num_vertices,
         float3 voxel_spacing,

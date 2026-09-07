@@ -22,7 +22,7 @@
 class BVH
 {
 public:
-    uint32_t num_objects;
+    uint32_t num_objects; ///< Number of primitives the hierarchy was built over.
     uint32_t num_nodes; ///< Always $2N - 1$ nodes for $N$ leaf primitives.
 
     torch::Tensor aabb_mins;    ///< Shape: [2N - 1, 3] minimum bounds.

@@ -18,7 +18,20 @@
 
 namespace triangle_mesh
 {
-    __global__ void compute_triangle_normals_kernel(
+/**
+ * @brief Computes the geometric normal of every triangle.
+ * @details One thread per triangle, taking the normalised cross product of two edge
+ * vectors. Orientation follows the winding, so a consistently wound mesh yields outward
+ * normals.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] triangle_normals Device array of per-triangle unit normals.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Degenerate triangles have a zero-length cross product and produce NaNs. Screen
+ * them with compute_triangle_areas_kernel() first.
+ */
+__global__ void compute_triangle_normals_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -36,7 +49,17 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_triangle_areas_kernel(
+/**
+ * @brief Computes the area of every triangle.
+ * @details One thread per triangle: half the magnitude of the edge cross product. Also the
+ * cheapest way to find degenerate faces, whose area collapses to zero.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] triangle_areas Device array of per-triangle areas.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_triangle_areas_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -54,7 +77,17 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_quality_kernel(
+/**
+ * @brief Computes a normalised shape quality score for every triangle.
+ * @details One thread per triangle. The score approaches 1 for an equilateral triangle and
+ * 0 for a degenerate sliver, giving a single scalar for mesh quality assessment.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] qualities Device array of per-triangle quality scores in $[0, 1]$.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_quality_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -69,7 +102,21 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_aspect_ratio_kernel(
+/**
+ * @brief Computes the aspect ratio of every triangle.
+ * @details One thread per triangle. @p mode selects the ratio definition -- longest edge to
+ * shortest, or longest edge to inradius -- since different meshing literature uses
+ * different conventions.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] mode Aspect ratio definition selector.
+ * @param[out] aspect_ratios Device array of per-triangle aspect ratios.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Larger values indicate worse-conditioned triangles; an equilateral triangle
+ * attains the minimum.
+ */
+__global__ void compute_aspect_ratio_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -85,7 +132,18 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_radii_ratio_kernel(
+/**
+ * @brief Computes the circumradius-to-inradius ratio of every triangle.
+ * @details One thread per triangle. The ratio reaches its minimum of 2 for an equilateral
+ * triangle and grows without bound as a triangle degenerates, making it a sensitive
+ * conditioning measure.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] ratios Device array of per-triangle radii ratios.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_radii_ratio_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -100,7 +158,17 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_triangle_regularity_kernel(
+/**
+ * @brief Computes how close each triangle is to equilateral.
+ * @details One thread per triangle, scoring 1 for a perfectly regular triangle and falling
+ * towards 0 as edge lengths diverge.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] regularities Device array of per-triangle regularity scores.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_triangle_regularity_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -115,7 +183,17 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_radius_edge_ratio_kernel(
+/**
+ * @brief Computes the circumradius-to-shortest-edge ratio of every triangle.
+ * @details One thread per triangle. This is the quantity Delaunay refinement bounds, so it
+ * is the natural measure when assessing a mesh produced by such an algorithm.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] ratios Device array of per-triangle radius-edge ratios.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_radius_edge_ratio_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -130,7 +208,18 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_angle_deviation_kernel(
+/**
+ * @brief Computes each triangle's maximum deviation from 60 degrees.
+ * @details One thread per triangle, reporting the largest absolute difference between an
+ * interior angle and the equilateral ideal. Unlike area-based scores this catches a
+ * triangle that is small yet badly shaped.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] deviations Device array of per-triangle angle deviations, in radians.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_angle_deviation_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -145,7 +234,18 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_triangle_aabbs_kernel(
+/**
+ * @brief Computes the axis-aligned bounding box of every triangle.
+ * @details One thread per triangle. These boxes are the leaf primitives the BVH builder
+ * consumes.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] aabb_mins Device array of per-triangle lower bounds.
+ * @param[out] aabb_maxs Device array of per-triangle upper bounds.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void compute_triangle_aabbs_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -164,6 +264,14 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Launches the per-triangle unit geometric normal computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_triangle_normals(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -179,6 +287,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, triangle_normals);
     }
 
+    /**
+     * @brief Launches the per-triangle area computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_triangle_areas(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -194,6 +310,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, triangle_areas);
     }
 
+    /**
+     * @brief Launches the per-triangle normalised shape quality score computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_quality(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -209,6 +333,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, qualities);
     }
 
+    /**
+     * @brief Launches the per-triangle aspect ratio computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_aspect_ratio(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -225,6 +357,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, mode, aspect_ratios);
     }
 
+    /**
+     * @brief Launches the per-triangle circumradius-to-inradius ratio computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_radii_ratio(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -240,6 +380,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, ratios);
     }
 
+    /**
+     * @brief Launches the per-triangle regularity score computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_triangle_regularity(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -255,6 +403,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, regularities);
     }
 
+    /**
+     * @brief Launches the per-triangle circumradius-to-shortest-edge ratio computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_radius_edge_ratio(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -270,6 +426,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, ratios);
     }
 
+    /**
+     * @brief Launches the per-triangle maximum angle deviation from 60 degrees computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_angle_deviation(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -285,6 +449,14 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, deviations);
     }
 
+    /**
+     * @brief Launches the per-triangle axis-aligned bounding box computation.
+     * @details Host wrapper sizing a 1D grid over the triangles; see the kernel for the
+     * parallel decomposition.
+     * @param[in] num_triangles Number of triangles.
+     * @param[in] vertices Device array of mesh vertex coordinates.
+     * @param[in] triangles Device array of triangle vertex indices.
+     */
     __host__ void compute_triangle_aabbs(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
@@ -301,7 +473,24 @@ namespace triangle_mesh
             num_triangles, vertices, triangles, aabb_mins, aabb_maxs);
     }
 
-    __global__ void compute_vertex_normals_kernel(
+/**
+ * @brief Accumulates face normals onto their incident vertices.
+ * @details One thread per triangle, scattering each face normal to its three corners.
+ * @p mode selects the weighting -- uniform, area-weighted, or angle-weighted. Angle
+ * weighting is the choice that makes the result an exact pseudonormal, which is what the
+ * signed-distance queries rely on for correct inside/outside classification.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] triangle_normals Device array of per-triangle normals.
+ * @param[out] vertex_normals Device array accumulating unnormalised vertex normals.
+ * @param[in] mode Weighting selector.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Results are unnormalised; follow with normalize_vertex_normals_kernel().
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void compute_vertex_normals_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -358,7 +547,16 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void normalize_vertex_normals_kernel(
+/**
+ * @brief Normalises accumulated vertex normals to unit length.
+ * @details One thread per vertex, completing the two-pass accumulate-then-normalise scheme.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in,out] vertex_normals Device array of vertex normals, normalised in place.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning An isolated vertex accumulates a zero vector, whose normalisation is undefined
+ * and yields NaNs.
+ */
+__global__ void normalize_vertex_normals_kernel(
         const uint32_t num_vertices,
         float3 *__restrict__ vertex_normals)
     {
@@ -373,6 +571,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes per-vertex normals from the incident faces.
+     * @details Two launches: scatter weighted face normals onto their vertices, then normalise.
+     * The weighting mode decides whether the result is a true angle-weighted pseudonormal, which
+     * is what the signed-distance queries require for correct sign determination.
+     */
     __host__ void compute_vertex_normals(
         const uint32_t num_vertices,
         const uint32_t num_triangles,
@@ -395,7 +599,18 @@ namespace triangle_mesh
             num_vertices, vertex_normals);
     }
 
-    __global__ void extract_edge_slots_kernel(
+/**
+ * @brief Emits an edge key and source slot for each of a triangle's three edges.
+ * @details One thread per triangle, writing sorted vertex-index pairs. Duplicates are
+ * intentional: sorting the keys groups the triangles sharing an edge together, which is how
+ * the adjacency structures are built without a hash table.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] edge_keys Device array of $3N$ edge keys, with duplicates.
+ * @param[out] edge_indices Device array of $3N$ source triangle slots.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void extract_edge_slots_kernel(
         const uint32_t num_triangles,
         const int3 *__restrict__ triangles,
         Edge *__restrict__ edge_keys,
@@ -416,7 +631,20 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_edge_normals_kernel(
+/**
+ * @brief Averages the normals of the triangles meeting at each edge.
+ * @details One thread per unique edge, reading the run of sorted entries that share its
+ * key. Angle-weighted edge pseudonormals are required alongside the vertex ones for exact
+ * sign determination on a watertight mesh.
+ * @param[in] num_edges Number of unique edges.
+ * @param[in] sorted_edge_keys Device array of edge keys in ascending order.
+ * @param[in] sorted_edge_indices Device array of source triangle slots, permuted alongside.
+ * @param[in] triangle_normals Device array of per-triangle normals.
+ * @param[out] edge_normals Device array of per-edge normals.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note A boundary edge has a single incident triangle and simply inherits its normal.
+ */
+__global__ void compute_edge_normals_kernel(
         const uint32_t num_edges,
         const Edge *__restrict__ sorted_edge_keys,
         const int *__restrict__ sorted_edge_indices,
@@ -449,6 +677,11 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes per-edge normals by averaging the incident faces.
+     * @details Needed alongside the vertex pseudonormals for exact sign determination on a
+     * watertight mesh.
+     */
     __host__ void compute_edge_normals(
         const uint32_t num_triangles,
         const torch::Tensor &triangles,
@@ -492,7 +725,17 @@ namespace triangle_mesh
             edge_normals);
     }
 
-    __global__ void extract_edges_kernel(
+/**
+ * @brief Emits edge keys paired with their source triangle index.
+ * @details One thread per triangle. A lighter variant of extract_edge_slots_kernel() used
+ * where only the owning triangle, not the local edge slot, is needed downstream.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] edge_keys Device array of $3N$ edge keys, with duplicates.
+ * @param[out] triangle_indices Device array of $3N$ source triangle indices.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void extract_edges_kernel(
         const uint32_t num_triangles,
         const int3* triangles,
         Edge* edge_keys,
@@ -513,7 +756,16 @@ namespace triangle_mesh
         }
     }
     
-    __global__ void unpack_edges_kernel(
+/**
+ * @brief Expands deduplicated edge keys into an index pair array.
+ * @details One thread per unique edge, unpacking each key into the `(V, 2)` layout the
+ * Python API exposes.
+ * @param[in] num_unique_edges Number of unique edges.
+ * @param[in] unique_edge_keys Device array of deduplicated edge keys.
+ * @param[out] unique_edges_out Device array of $2E$ vertex indices.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void unpack_edges_kernel(
         const uint32_t num_unique_edges,
         const Edge* unique_edge_keys,
         int* unique_edges_out)
@@ -526,6 +778,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Builds the edge-to-triangle CSR connectivity map.
+     * @details Emits an edge key per triangle corner, sorts, uniques, and derives CSR offsets.
+     * The per-edge incident count doubles as a manifoldness test: 2 is manifold, 1 a boundary,
+     * more than 2 non-manifold.
+     */
     __host__ void compute_edges_to_triangle_map(
         const uint32_t num_triangles,
         const torch::Tensor &triangles,
@@ -597,7 +855,18 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_vertex_triangle_counts_kernel(
+/**
+ * @brief Counts the triangles incident on each vertex.
+ * @details One thread per triangle, atomically incrementing the counter of each corner.
+ * The counts are prefix-summed by the host into the CSR offsets of the vertex-to-triangle
+ * map.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] counts Device array of per-vertex incidence counts; must be zeroed first.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning @p counts must be zeroed before launch, and the increments are atomic.
+ */
+__global__ void compute_vertex_triangle_counts_kernel(
         const uint32_t num_triangles,
         const int3* triangles,
         int* counts)
@@ -611,7 +880,20 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void compute_vertex_triangle_indices_kernel(
+/**
+ * @brief Fills the vertex-to-triangle CSR index array.
+ * @details One thread per triangle. Each corner claims the next free slot in its vertex's
+ * CSR range through an atomic bump of a per-vertex cursor.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in,out] current_offsets Device array of per-vertex write cursors, initialised to
+ *     the CSR offsets.
+ * @param[out] indices Device array receiving incident triangle indices.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Triangles appear in nondeterministic order within each vertex's range. Sort per
+ * vertex if a canonical ordering matters.
+ */
+__global__ void compute_vertex_triangle_indices_kernel(
         const uint32_t num_triangles,
         const int3* triangles,
         int* current_offsets,
@@ -629,6 +911,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Builds the vertex-to-triangle CSR connectivity map.
+     * @details Counts incidences, prefix-sums them into offsets, then scatters triangle indices
+     * into each vertex's range.
+     * @warning Triangles land in nondeterministic order within a vertex's range.
+     */
     void build_vertices_to_triangle_map(
         const uint32_t num_vertices,
         const uint32_t num_triangles,
@@ -673,7 +961,24 @@ namespace triangle_mesh
         );
     }
 
-    __global__ void get_non_manifold_vertices_kernel(
+/**
+ * @brief Flags vertices whose incident triangles do not form a single fan.
+ * @details One thread per vertex, walking its incident triangles through the CSR map and
+ * checking that they link edge to edge into one connected fan (or a single open strip at a
+ * boundary). A vertex where two otherwise separate surface sheets meet at a point yields
+ * several fans -- geometrically valid, topologically non-manifold, and a case most
+ * downstream algorithms cannot handle.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] v2t_offsets Device array of per-vertex CSR offsets.
+ * @param[in] v2t_counts Device array of per-vertex incidence counts.
+ * @param[in] v2t_indices Device array of incident triangle indices.
+ * @param[out] out_is_non_manifold Device array of per-vertex flags.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Detects only vertex-based non-manifoldness; edges shared by more than two
+ * triangles are a separate check.
+ */
+__global__ void get_non_manifold_vertices_kernel(
         const uint32_t num_vertices,
         const int3* triangles,
         const int* v2t_offsets,
@@ -753,6 +1058,11 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Flags vertices whose incident triangles do not form a single fan.
+     * @details Detects the case where two surface sheets meet at a single point -- geometrically
+     * valid but topologically non-manifold, and unusable by most downstream algorithms.
+     */
     torch::Tensor get_non_manifold_vertices(
         const uint32_t num_vertices,
         const torch::Tensor& triangles,
@@ -779,7 +1089,26 @@ namespace triangle_mesh
         
         return torch::nonzero(out_is_non_manifold).squeeze(1);
     }
-    __global__ void sample_points_triangle_mesh_kernel(
+/**
+ * @brief Samples points uniformly across the mesh surface.
+ * @details One thread per sample. Barycentric coordinates come from the standard
+ * square-root warp of two uniform variates, which maps them uniformly over the triangle.
+ * Combined with area-proportional triangle selection by the caller, the result is uniform
+ * over the whole surface rather than biased towards small faces. Normals and colours are
+ * interpolated at the sample.
+ * @param[in] num_points Number of samples.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] tri_indices Device array of the triangle chosen for each sample.
+ * @param[in] r1_r2 Device array of two uniform variates per sample.
+ * @param[in] vertex_normals Device array of per-vertex normals, or `nullptr`.
+ * @param[in] triangle_normals Device array of per-triangle normals, or `nullptr`.
+ * @param[in] vertex_colors Device array of per-vertex colours, or `nullptr`.
+ * @param[out] out_points Device array of sampled positions.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Uniformity depends on @p tri_indices being drawn proportionally to triangle area.
+ */
+__global__ void sample_points_triangle_mesh_kernel(
         const int num_points,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
@@ -840,6 +1169,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Samples points uniformly over the mesh surface.
+     * @details Selects triangles with probability proportional to area, then samples uniformly
+     * within each, so the result is uniform over the surface rather than biased towards small
+     * faces.
+     */
     __host__ void sample_points_triangle_mesh(
         const int num_points,
         const float3 *__restrict__ vertices,
@@ -870,7 +1205,17 @@ namespace triangle_mesh
             out_colors);
     }
 
-    __global__ void compute_vertex_degree_kernel(
+/**
+ * @brief Counts the edges incident on each vertex.
+ * @details One thread per unique edge, atomically incrementing both endpoints. The degree
+ * is the normalising denominator of the uniform Laplacian.
+ * @param[in] num_unique_edges Number of unique edges.
+ * @param[in] unique_edges Device array of $2E$ vertex indices.
+ * @param[out] vertex_degrees Device array of per-vertex degrees; must be zeroed first.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning @p vertex_degrees must be zeroed before launch.
+ */
+__global__ void compute_vertex_degree_kernel(
         const uint32_t num_unique_edges,
         const int *__restrict__ unique_edges,
         int *__restrict__ vertex_degrees)
@@ -884,6 +1229,10 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Counts the edges incident on each vertex.
+     * @details The normalising denominator of the uniform Laplacian.
+     */
     __host__ void compute_vertex_degree(
         const uint32_t num_unique_edges,
         const int *__restrict__ unique_edges,
@@ -900,7 +1249,20 @@ namespace triangle_mesh
             vertex_degrees);
     }
 
-    __global__ void compute_uniform_laplacian_kernel(
+/**
+ * @brief Accumulates the unnormalised uniform (graph) Laplacian.
+ * @details One thread per unique edge, adding each endpoint's displacement to the other.
+ * The uniform Laplacian ignores edge lengths entirely, which makes it cheap and robust on
+ * irregular triangulations but geometrically biased where triangle sizes vary.
+ * @param[in] num_unique_edges Number of unique edges.
+ * @param[in] unique_edges Device array of $2E$ vertex indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[out] vertex_lb_uniform Device array accumulating Laplacian vectors.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void compute_uniform_laplacian_kernel(
         const uint32_t num_unique_edges,
         const int *__restrict__ unique_edges,
         const float3 *__restrict__ vertices,
@@ -919,7 +1281,16 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void normalize_uniform_laplacian_kernel(
+/**
+ * @brief Divides the accumulated uniform Laplacian by each vertex's degree.
+ * @details One thread per vertex, completing the accumulate-then-normalise pair.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in] vertex_degrees Device array of per-vertex degrees.
+ * @param[in,out] vertex_lb_uniform Device array of Laplacian vectors, normalised in place.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Isolated vertices have degree zero; guard against division by zero.
+ */
+__global__ void normalize_uniform_laplacian_kernel(
         const uint32_t num_vertices,
         const int *__restrict__ vertex_degrees,
         float3 *__restrict__ vertex_lb_uniform)
@@ -933,6 +1304,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes the uniform (graph) Laplacian at every vertex.
+     * @details Accumulates neighbour displacements, then divides by degree. Cheap and robust on
+     * irregular triangulations, but geometrically biased where triangle sizes vary -- prefer the
+     * cotangent form when geometry matters.
+     */
     __host__ void compute_uniform_laplacian(
         const uint32_t num_vertices,
         const uint32_t num_unique_edges,
@@ -959,7 +1336,22 @@ namespace triangle_mesh
             vertex_lb_uniform);
     }
 
-    __global__ void compute_voronoi_areas_kernel(
+/**
+ * @brief Accumulates the mixed Voronoi area of each vertex.
+ * @details One thread per triangle, distributing area to its corners by the Meyer et al.
+ * (2003) mixed rule: the circumcentric Voronoi region for a well-shaped triangle, and a
+ * barycentric fallback for obtuse ones whose circumcentre falls outside. Without that
+ * fallback obtuse triangles would contribute negative area and the curvature operators
+ * built on it would diverge.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[out] voronoi_areas Device array of per-vertex areas; must be zeroed first.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void compute_voronoi_areas_kernel(
         const uint32_t num_triangles,
         const int3 *__restrict__ triangles,
         const float3 *__restrict__ vertices,
@@ -1023,6 +1415,12 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes the mixed Voronoi area of every vertex.
+     * @details Uses the Meyer et al. (2003) mixed rule, falling back to barycentric areas on
+     * obtuse triangles whose circumcentre lies outside. Without that fallback the areas could go
+     * negative and the operators built on them would diverge.
+     */
     __host__ void compute_voronoi_areas(
         const uint32_t num_triangles,
         const int3 *__restrict__ triangles,
@@ -1036,7 +1434,23 @@ namespace triangle_mesh
             num_triangles, triangles, vertices, voronoi_areas);
     }
 
-    __global__ void compute_cotangent_laplacian_kernel(
+/**
+ * @brief Accumulates the unnormalised cotangent Laplace-Beltrami operator.
+ * @details One thread per triangle, adding the cotangent weights
+ * $\tfrac{1}{2}(\cot \alpha + \cot \beta)$ of its edges. Unlike the uniform
+ * Laplacian these weights encode the surface's actual geometry, which is what makes the
+ * operator converge to the true Laplace-Beltrami operator under refinement.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[out] vertex_lb_cot Device array accumulating Laplacian vectors.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Cotangent weights become unbounded as a triangle degenerates and are negative
+ * for obtuse angles, so a poor-quality mesh can produce a non-positive-definite operator.
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void compute_cotangent_laplacian_kernel(
         const uint32_t num_triangles,
         const int3 *__restrict__ triangles,
         const float3 *__restrict__ vertices,
@@ -1073,7 +1487,19 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void normalize_cotangent_laplacian_kernel(
+/**
+ * @brief Divides the cotangent Laplacian by each vertex's mixed Voronoi area.
+ * @details One thread per vertex. The area normalisation converts the accumulated
+ * integrated quantity into a pointwise one, completing the discrete Laplace-Beltrami
+ * operator.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in] voronoi_areas Device array of per-vertex mixed Voronoi areas.
+ * @param[in,out] vertex_lb_cot Device array of Laplacian vectors, normalised in place.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Vertices with near-zero area amplify the result; clamp or filter degenerate
+ * neighbourhoods first.
+ */
+__global__ void normalize_cotangent_laplacian_kernel(
         const uint32_t num_vertices,
         const float *__restrict__ voronoi_areas,
         float3 *__restrict__ vertex_lb_cot)
@@ -1088,6 +1514,14 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes the discrete Laplace-Beltrami operator at every vertex.
+     * @details Accumulates cotangent weights per triangle, then normalises by mixed Voronoi area.
+     * Unlike the uniform Laplacian these weights encode the surface's actual geometry, so the
+     * operator converges under refinement.
+     * @warning Cotangent weights are unbounded for degenerate triangles and negative for obtuse
+     * angles, so a poor-quality mesh can yield a non-positive-definite operator.
+     */
     __host__ void compute_cotangent_laplacian(
         const uint32_t num_vertices,
         const uint32_t num_triangles,
@@ -1114,7 +1548,20 @@ namespace triangle_mesh
             vertex_lb_cot);
     }
 
-    __global__ void compute_incident_angles_kernel(
+/**
+ * @brief Accumulates the interior angles meeting at each vertex.
+ * @details One thread per triangle, adding each of its three interior angles to the
+ * corresponding corner. The total is the angle sum entering the Gaussian curvature
+ * formula.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[out] vertex_angle_sum Device array of per-vertex angle sums; must be zeroed first.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void compute_incident_angles_kernel(
         const uint32_t num_triangles,
         const int3 *__restrict__ triangles,
         const float3 *__restrict__ vertices,
@@ -1132,7 +1579,21 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void finalize_gaussian_curvature_kernel(
+/**
+ * @brief Computes discrete Gaussian curvature from angle deficit.
+ * @details One thread per vertex, evaluating $K = (2\pi - \sum \theta_i) / A$ -- the
+ * discrete Gauss-Bonnet form, where curvature is the failure of the incident angles to sum
+ * to a full turn, normalised by the mixed Voronoi area.
+ * @param[in] num_vertices Number of vertices.
+ * @param[in] voronoi_areas Device array of per-vertex mixed Voronoi areas.
+ * @param[in] vertex_angle_sum Device array of per-vertex angle sums.
+ * @param[out] gaussian_curvature Device array of per-vertex curvature values.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Boundary vertices have no full angular neighbourhood, so the $2\pi$ deficit is
+ * meaningless there; treat their values as invalid.
+ * @warning Near-zero Voronoi areas amplify the deficit without bound.
+ */
+__global__ void finalize_gaussian_curvature_kernel(
         const uint32_t num_vertices,
         const float *__restrict__ voronoi_areas,
         const float *__restrict__ vertex_angle_sum,
@@ -1147,6 +1608,13 @@ namespace triangle_mesh
         }
     }
 
+    /**
+     * @brief Computes discrete Gaussian curvature at every vertex.
+     * @details Evaluates the angle deficit $K = (2\pi - \sum \theta_i) / A$ of the discrete
+     * Gauss-Bonnet theorem.
+     * @note Boundary vertices lack a full angular neighbourhood, so their values are not
+     * meaningful.
+     */
     __host__ void compute_gaussian_curvature(
         const uint32_t num_vertices,
         const uint32_t num_triangles,
@@ -1167,7 +1635,19 @@ namespace triangle_mesh
         finalize_gaussian_curvature_kernel<<<blocks_vert, threads>>>(
             num_vertices, voronoi_areas, vertex_angle_sum, gaussian_curvature);
     }
-    __global__ void find_unvisited_kernel(
+/**
+ * @brief Finds any triangle not yet reached by the winding-repair traversal.
+ * @details One thread per triangle, racing to claim a seed for the next connected
+ * component. A mesh in several disconnected pieces needs one traversal per piece, and this
+ * is how the host discovers the next starting point.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in] visited Device array of per-triangle visit flags.
+ * @param[out] seed Device slot receiving an unvisited triangle index.
+ * @param[out] found Device flag set when a seed was written.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @note Which unvisited triangle wins the race is unspecified; any is a valid seed.
+ */
+__global__ void find_unvisited_kernel(
         const int num_triangles,
         const int *__restrict__ visited,
         int *__restrict__ seed,
@@ -1183,7 +1663,30 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void fix_winding_bfs_kernel(
+/**
+ * @brief Propagates consistent winding across the mesh, one frontier layer per launch.
+ * @details One thread per frontier triangle. Each visits its edge-adjacent neighbours
+ * through the vertex-to-triangle map and, where a shared edge is traversed in the same
+ * direction by both -- the signature of opposed winding -- flips the neighbour before
+ * enqueueing it. The host relaunches until the frontier empties, so a whole connected
+ * component ends up consistently oriented.
+ * @param[in] num_triangles Number of triangles.
+ * @param[in,out] triangles Device array of triangle vertex indices, flipped in place.
+ * @param[in] v2t_offsets Device array of per-vertex CSR offsets.
+ * @param[in] v2t_counts Device array of per-vertex incidence counts.
+ * @param[in] v2t_indices Device array of incident triangle indices.
+ * @param[in,out] visited Device array of per-triangle visit flags.
+ * @param[in] frontier Device array of triangle indices to expand.
+ * @param[in] frontier_size Number of entries in @p frontier.
+ * @param[out] next_frontier Device array receiving the following layer.
+ * @param[in,out] next_frontier_size Device counter, atomically incremented per insertion.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Only makes winding *consistent*, not outward-facing; a whole component may end
+ * up inverted. component_signed_volume_kernel() decides that separately.
+ * @warning Non-manifold edges shared by more than two triangles have no well-defined
+ * propagation and may be left inconsistent.
+ */
+__global__ void fix_winding_bfs_kernel(
         const int num_triangles,
         int3 *__restrict__ triangles,
         const int *__restrict__ v2t_offsets,
@@ -1244,7 +1747,23 @@ namespace triangle_mesh
         }
     }
 
-    __global__ void component_signed_volume_kernel(
+/**
+ * @brief Accumulates the signed volume of one connected component.
+ * @details One thread per face, summing the signed volumes of the tetrahedra formed with
+ * the origin by the divergence theorem. A closed, outward-wound component gives a positive
+ * total; a negative one means the component is consistently but inwardly wound.
+ * @param[in] num_component_faces Number of faces in the component.
+ * @param[in] component_faces Device array of the component's triangle indices.
+ * @param[in] vertices Device array of mesh vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] volumes Device accumulator for the signed volume.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning Meaningful only for a closed component; an open surface gives an
+ * origin-dependent value with no orientation interpretation.
+ * @warning Vertices are shared between triangles, so accumulation uses `atomicAdd`; the
+ * reduction order, and hence the last bits of the result, varies between runs.
+ */
+__global__ void component_signed_volume_kernel(
         const int num_component_faces,
         const int *__restrict__ component_faces,
         const float3 *__restrict__ vertices,
@@ -1265,7 +1784,16 @@ namespace triangle_mesh
         volumes[idx] = vol;
     }
 
-    __global__ void invert_component_kernel(
+/**
+ * @brief Reverses the winding of every face in a component.
+ * @details One thread per face, swapping two vertex indices. Applied to components whose
+ * signed volume came out negative, flipping them to outward-facing.
+ * @param[in] num_component_faces Number of faces in the component.
+ * @param[in] component_faces Device array of the component's triangle indices.
+ * @param[in,out] triangles Device array of triangle vertex indices, flipped in place.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+__global__ void invert_component_kernel(
         const int num_component_faces,
         const int *__restrict__ component_faces,
         int3 *__restrict__ triangles)
@@ -1278,6 +1806,13 @@ namespace triangle_mesh
         triangles[tri_id] = make_int3(tri.x, tri.z, tri.y);
     }
 
+    /**
+     * @brief Makes triangle winding consistent and outward-facing.
+     * @details Breadth-first propagation orients each connected component consistently, then the
+     * component's signed volume decides whether it needs inverting wholesale. The two steps are
+     * separate because consistency alone cannot distinguish inward from outward.
+     * @warning Non-manifold edges have no well-defined propagation and may remain inconsistent.
+     */
     __host__ void fix_normals(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,

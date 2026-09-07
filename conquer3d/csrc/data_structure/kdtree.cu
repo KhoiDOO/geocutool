@@ -18,6 +18,15 @@
 
 namespace kdtree 
 {
+    /**
+     * @brief Pivot offset that keeps a KD-tree subtree left-balanced.
+     * @details Determines how many points fall in the left subtree of a chunk of $N$ points so
+     * the resulting tree is complete: every level full except possibly the last, which fills
+     * from the left. That property is what lets traversal address children arithmetically
+     * instead of following stored pointers.
+     * @param[in] N Number of points in the chunk.
+     * @return Index of the pivot within the chunk.
+     */
     __device__ inline int get_left_balanced_offset(int N) {
         if (N <= 1) return 0;
         int H = 31 - __clz(N);
@@ -30,6 +39,17 @@ namespace kdtree
         return left_nodes_above + left_bottom;
     }
 
+    /**
+     * @brief Locates the point range belonging to a subtree tag at a given level.
+     * @details Walks the tag's bit path from the root, halving the range at each level by the
+     * same left-balanced rule used during construction, so the bounds agree exactly with the
+     * layout the build produced.
+     * @param[in] tag Subtree identifier.
+     * @param[in] N Total number of points.
+     * @param[in] L Level being processed.
+     * @param[out] out_start First index of the subtree's range.
+     * @param[out] out_size Number of points in the range.
+     */
     __device__ inline void get_chunk_bounds(int tag, int N, int L, int& out_start, int& out_size) {
         int path = tag + 1;
         int unsettled_start = (1U << L) - 1;
@@ -52,10 +72,24 @@ namespace kdtree
         out_size = current_size;
     }
 
+    /**
+     * @brief Thrust comparator ordering points by subtree tag, then by one coordinate axis.
+     * @details Sorting on the tag first keeps each subtree's points contiguous, so a single
+     * global sort partitions every subtree at the current level simultaneously -- which is what
+     * lets the build proceed one level per launch instead of one node at a time.
+     */
     struct ZipCompare {
-        int axis;
+        int axis; ///< Coordinate axis to split on at this level.
+
+        /** @brief Constructs a comparator for the given split axis. */
         ZipCompare(int a) : axis(a) {}
 
+        /**
+         * @brief Orders two tagged points by subtree, then by the split axis.
+         * @param[in] a First entry.
+         * @param[in] b Second entry.
+         * @return True if @p a sorts before @p b.
+         */
         __device__ bool operator()(
             const thrust::tuple<uint32_t, float3, int64_t>& a, 
             const thrust::tuple<uint32_t, float3, int64_t>& b) const 
@@ -75,7 +109,24 @@ namespace kdtree
         }
     };
 
-    __global__ void update_tags(uint32_t* tag, int numPoints, int L) {
+/**
+ * @brief Advances every point's subtree tag by one level of the balanced KD-tree build.
+ * @details The tree is built breadth-first without recursion: at level $L$ each point
+ * carries a tag naming the subtree it currently belongs to, and this kernel refines that
+ * tag after the level's partition has been applied. Pivot positions come from the
+ * left-balanced offset rule, which is what makes the finished tree complete and lets
+ * traversal address children arithmetically instead of storing pointers.
+ *
+ * One thread per point. Points already settled as pivots at shallower levels -- the first
+ * $2^L - 1$ entries -- return immediately.
+ *
+ * @param[in,out] tag Device array of `numPoints` subtree tags, refined in place.
+ * @param[in] numPoints Total number of points in the tree.
+ * @param[in] L Level being processed, counting from the root at zero.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid, once per level, so the
+ * host issues $\lceil \log_2 N \rceil$ launches in sequence.
+ */
+__global__ void update_tags(uint32_t* tag, int numPoints, int L) {
         int p_idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (p_idx >= numPoints) return;
         
@@ -136,7 +187,31 @@ namespace kdtree
         thrust::sort(policy, zip_begin, zip_end, ZipCompare(deepestLevel % 3));
     }
 
-    __global__ void query_kdtree_kernel(
+/**
+ * @brief Finds the $k$ nearest neighbours of every query point.
+ * @details One thread per query, each performing an independent stackless descent of the
+ * balanced tree via `query_kdtree_loop`. Because the tree is complete, child indices are
+ * computed arithmetically and the traversal needs no explicit stack -- only a small
+ * insertion-sorted priority queue held in registers.
+ *
+ * @param[in] num_queries Number of query points $N$.
+ * @param[in] num_points Number of points in the tree $M$.
+ * @param[in] k Neighbours to return per query; must not exceed `MAX_K`.
+ * @param[in] query_points Device array of $N$ query coordinates.
+ * @param[in] tree_points Device array of $M$ coordinates in KD-tree order.
+ * @param[in] tree_inds Device array of $M$ permutation indices mapping tree order back to
+ *     the caller's original ordering.
+ * @param[out] out_dists Device array of $N \times k$ squared distances, ascending per query.
+ * @param[out] out_inds Device array of $N \times k$ original-order point indices; unfilled
+ *     slots are $-1$.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ * @warning The priority queue is sized by the compile-time constant `MAX_K` so it stays in
+ * registers. Raising `MAX_K` increases register pressure on every thread and can spill to
+ * local memory, costing far more than the extra neighbours are worth.
+ * @warning Traversal is data dependent, so warps diverge when their queries prune
+ * different branches.
+ */
+__global__ void query_kdtree_kernel(
         const uint32_t num_queries,
         const uint32_t num_points,
         const uint32_t k,
