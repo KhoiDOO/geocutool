@@ -310,8 +310,8 @@ __global__ void generate_edges_and_triangles_mca_kernel(
         for (int t = 0; t < 5 && tri_edges[t * 3] != -1; ++t) {
             int local_edges[3] = {
                 tri_edges[t * 3 + 0],
-                tri_edges[t * 3 + 1],
-                tri_edges[t * 3 + 2]
+                tri_edges[t * 3 + 2],
+                tri_edges[t * 3 + 1]
             };
             #pragma unroll
             for (int e_idx = 0; e_idx < 3; ++e_idx) {

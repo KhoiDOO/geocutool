@@ -59,13 +59,20 @@ static __constant__ float dc_corner_uvw[8][3] = {
  * deterministically to one of four quadrant slots. Because adjacent cells agree on this
  * mapping, the dual quad around a shared edge is assembled consistently from all four
  * incident cells.
+ *
+ * Slots 0-3 must walk the four incident cells **counter-clockwise about the edge's own
+ * positive axis**, and all three edge families must agree on that handedness -- otherwise
+ * the faces of one family are wound backwards relative to the rest and the extracted mesh
+ * has inconsistent normals. The right-handed plane perpendicular to each axis is $(Y, Z)$
+ * for $+X$, $(Z, X)$ for $+Y$ and $(X, Y)$ for $+Z$; note that $+Y$ pairs with $(Z, X)$ and
+ * not $(X, Z)$, which is the easy mistake here.
  */
 static __constant__ int dc_edge_quadrant[12] = {
     0, // e=0 (+X) -> slot 0
     3, // e=1 (+Y) -> slot 3
-    3, // e=2 (+X) -> slot 3
+    1, // e=2 (+X) -> slot 1
     0, // e=3 (+Y) -> slot 0
-    1, // e=4 (+X) -> slot 1
+    3, // e=4 (+X) -> slot 3
     2, // e=5 (+Y) -> slot 2
     2, // e=6 (+X) -> slot 2
     1, // e=7 (+Y) -> slot 1

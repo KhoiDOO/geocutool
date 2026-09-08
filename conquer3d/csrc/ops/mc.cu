@@ -616,8 +616,15 @@ __global__ void interpolate_vertices_kernel(
  * @param[in] voxel_triangle_prefix_sums Device array of per-voxel output offsets.
  * @param[out] out_triangles Device array receiving triangle vertex index triples.
  * @note Launched with `NTHREADS` threads per block over a 1D grid.
- * @note Winding follows the table, giving outward-facing normals for a field that is
- * negative inside.
+ * @note The implementation is based on Bourke implementation at http://paulbourke.net/geometry/polygonise/.
+ * @note The adatation to CUDA at first is normal inconsistent where all normals are facing inwards.
+ * @note The canonical Lorensen-Cline / Bourke ::triTable is written for the convention
+ * that a corner bit is set when the corner is *below* the isolevel, and it winds each
+ * triangle so the right-hand normal points towards that below-isolevel region. For a
+ * signed distance field, below-isolevel is the *interior*, so emitting the table row
+ * verbatim yields inward-facing normals. The last two indices are therefore swapped on
+ * write, which reverses the winding and gives outward-facing normals for a field that is
+ * negative inside -- matching Dual Contouring and the rest of the library.
  */
 __global__ void assemble_triangles_kernel(
         const uint32_t num_active_voxels,
@@ -648,9 +655,11 @@ __global__ void assemble_triangles_kernel(
             uint32_t v1 = voxel_edge_to_vert_idx[active_voxel_idx * 12 + edge1];
             uint32_t v2 = voxel_edge_to_vert_idx[active_voxel_idx * 12 + edge2];
 
+            // Reversed winding: see the note above. The table's own order points the
+            // normal into the solid for a negative-inside field.
             out_triangles[(start_tri_idx + tri_count) * 3 + 0] = v0;
-            out_triangles[(start_tri_idx + tri_count) * 3 + 1] = v1;
-            out_triangles[(start_tri_idx + tri_count) * 3 + 2] = v2;
+            out_triangles[(start_tri_idx + tri_count) * 3 + 1] = v2;
+            out_triangles[(start_tri_idx + tri_count) * 3 + 2] = v1;
             
             tri_count++;
         }
