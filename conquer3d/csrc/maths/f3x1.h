@@ -260,6 +260,40 @@ namespace maths
             fminf(fmaxf(v.z, min_val.z), max_val.z)
         );
     }
+
+    /**
+     * @brief Linear interpolation between two vectors.
+     * @details Overloads the scalar lerp() in ops.h. Interpolating along an edge is the
+     * single most repeated operation in the extraction kernels -- a crossing point, an
+     * interpolated normal, a blended colour -- and naming it keeps those sites readable.
+     * @param[in] a Vector returned at $t = 0$.
+     * @param[in] b Vector returned at $t = 1$.
+     * @param[in] t Interpolation parameter; not clamped.
+     * @return $\mathbf{a} + t\,(\mathbf{b} - \mathbf{a})$.
+     */
+    static inline __host__ __device__ float3 lerp(float3 a, float3 b, float t) {
+        return a + (b - a) * t;
+    }
+
+    /**
+     * @brief Normalises a vector, falling back when it is too short to normalise.
+     * @details normalize() divides unconditionally and yields NaN or an infinity for a
+     * degenerate input. Kernels therefore guard the division by hand, and did so with three
+     * different epsilons across the tree. This states the policy once: below @p eps the
+     * direction is meaningless, so @p fallback is returned instead.
+     * @param[in] v Vector to normalise.
+     * @param[in] fallback Direction returned when @p v is shorter than @p eps.
+     * @param[in] eps Length below which @p v is treated as degenerate.
+     * @return The unit vector along @p v, or @p fallback.
+     */
+    static inline __host__ __device__ float3 normalize_safe(
+        float3 v,
+        float3 fallback = make_float3(0.0f, 0.0f, 1.0f),
+        float eps = 1e-8f)
+    {
+        float len = norm(v);
+        return (len > eps) ? (v * (1.0f / len)) : fallback;
+    }
 }
 
 /**

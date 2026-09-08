@@ -238,23 +238,6 @@ __host__ __device__ __forceinline__ float3 solve_qef(
     return x;
 }
 
-/**
- * @brief Evaluates the residual Quadratic Error Function (QEF) value at point x.
- */
-__host__ __device__ __forceinline__ float evaluate_qef_error(
-    const float3 *pts,
-    const float3 *normals,
-    int count,
-    const float3 &x
-) {
-    float error = 0.0f;
-    for (int i = 0; i < count; ++i) {
-        float d = maths::dot(normals[i], x - pts[i]);
-        error += d * d;
-    }
-    return error;
-}
-
 } // namespace maths
 
 #endif // QEF_H
