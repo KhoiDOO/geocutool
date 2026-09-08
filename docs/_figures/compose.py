@@ -81,6 +81,35 @@ def pad_to(panels, width: int):
     return out
 
 
+_CAP_TOP = 12   #: accent rule to label baseline
+_CAP_GAP = 8    #: label to a sublabel placed on its own line
+
+
+def _caption_height(draw, labels, sublabels, pw, f_label, f_sub) -> int:
+    """Height needed by the tallest caption in the set.
+
+    A sublabel may sit beside its label, drop to a line of its own, or carry
+    several lines. A fixed band silently clips the last line as soon as the
+    type or the text grows, so it is measured instead of assumed.
+    """
+    lh = f_label.getbbox("Ag")[3]
+    sh = f_sub.getbbox("Ag")[3]
+    tallest = 0
+    for i, label in enumerate(labels):
+        sub = sublabels[i] if sublabels and i < len(sublabels) else ""
+        lines = sub.split("\n") if sub else []
+        inline = (
+            len(lines) == 1
+            and _text_width(draw, label, f_label) + 16
+            + _text_width(draw, lines[0], f_sub) <= pw
+        )
+        height = _CAP_TOP + lh
+        if lines and not inline:
+            height += _CAP_GAP + len(lines) * (sh + 8)
+        tallest = max(tallest, height + 16)
+    return tallest
+
+
 def grid(
     panels: Sequence[np.ndarray],
     labels: Sequence[str],
@@ -88,7 +117,7 @@ def grid(
     sublabels: Optional[Sequence[str]] = None,
     cols: Optional[int] = None,
     pad: int = 18,
-    label_h: int = 78,
+    label_h: int = 104,
     accents: Optional[Sequence[Tuple[int, int, int]]] = None,
 ) -> Image.Image:
     """Arrange rendered panels into a labelled grid."""
@@ -97,13 +126,17 @@ def grid(
     rows = (n + cols - 1) // cols
 
     ph, pw = panels[0].shape[0], panels[0].shape[1]
+    f_label = _font(42, bold=True)
+    f_sub = _font(32)
+
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    label_h = max(label_h, _caption_height(probe, labels, sublabels, pw, f_label, f_sub))
+
     W = cols * pw + (cols + 1) * pad
     H = rows * (ph + label_h) + (rows + 1) * pad
 
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
-    f_label = _font(30, bold=True)
-    f_sub = _font(22)
 
     for i, panel in enumerate(panels):
         r, c = divmod(i, cols)
@@ -113,19 +146,46 @@ def grid(
 
         # Accent rule above each caption ties the panel to its label.
         accent = tuple(accents[i]) + (255,) if accents else ACCENT
-        ty = y + ph + 12
-        draw.line([(x, ty), (x + 34, ty)], fill=accent, width=3)
+        ty = y + ph + 16
+        draw.line([(x, ty), (x + 46, ty)], fill=accent, width=4)
 
-        draw.text((x, ty + 9), labels[i], font=f_label, fill=INK_STRONG)
-        if sublabels and sublabels[i]:
-            w = _text_width(draw, labels[i], f_label)
-            sw = _text_width(draw, sublabels[i], f_sub)
+        # A narrow panel -- a tall subject trims to one -- cannot hold a long
+        # label at full size, and an overrun writes straight over its
+        # neighbour's caption.
+        f_lab = f_label
+        size = 42
+        while size > 22 and _text_width(draw, labels[i], f_lab) > pw:
+            size -= 2
+            f_lab = _font(size, bold=True)
+        label_w = _text_width(draw, labels[i], f_lab)
+        draw.text((x, ty + _CAP_TOP), labels[i], font=f_lab, fill=INK_STRONG)
+
+        sub = sublabels[i] if sublabels and i < len(sublabels) else ""
+        if sub:
+            lines = sub.split("\n")
             # Trimmed panels can be narrower than label + sublabel side by side,
             # which would run the text into the neighbouring panel.
-            if w + 12 + sw <= pw:
-                draw.text((x + w + 12, ty + 12), sublabels[i], font=f_sub, fill=INK)
+            inline = (
+                len(lines) == 1
+                and label_w + 16 + _text_width(draw, lines[0], f_sub) <= pw
+            )
+            if inline:
+                draw.text((x + label_w + 16, ty + _CAP_TOP + 8), sub,
+                          font=f_sub, fill=INK)
             else:
-                draw.text((x, ty + 44), sublabels[i], font=f_sub, fill=INK)
+                # On its own line it can still overrun a narrow panel, so step
+                # the size down until it fits rather than bleeding into the
+                # neighbour.
+                font, size = f_sub, 32
+                while size > 18 and max(
+                    _text_width(draw, line, font) for line in lines
+                ) > pw:
+                    size -= 2
+                    font = _font(size)
+                y0 = ty + _CAP_TOP + f_lab.getbbox("Ag")[3] + _CAP_GAP
+                step = font.getbbox("Ag")[3] + 8
+                for k, line in enumerate(lines):
+                    draw.text((x, y0 + k * step), line, font=font, fill=INK)
 
     return canvas
 

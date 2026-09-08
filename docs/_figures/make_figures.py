@@ -1074,6 +1074,77 @@ def fig_hermite(rnd):
     compose.save(compose.stack([top, bot], pad=16), OUT / "fig-hermite.png")
 
 
+AZ_QUALITY = 205
+
+
+def fig_quality(rnd):
+    """Every quality metric a TriangleMesh reports, drawn on the mesh."""
+    tmesh = load_mesh(_asset("Lucy"))
+    tmesh.fix_normals()
+    tmesh.compute_triangle_normals()
+    tmesh.compute_triangle_areas()
+    tmesh.compute_vertices_to_triangle_map()
+    tmesh.compute_edges_to_triangle_map()
+
+    # Two of the seven are whole-mesh scalars rather than fields, so they label
+    # the reference panel instead of colouring one: get_quality() is the (min,
+    # mean) of the regularity field, and valence_567_percentage is a single
+    # share of the vertices.
+    q_min, q_mean = tmesh.get_quality()
+    valence = tmesh.valence_567_percentage
+    print(f"    get_quality() min {q_min:.4f} mean {q_mean:.4f} · "
+          f"valence 5-7 {valence:.1f}%")
+
+    fields = [
+        ("Aspect ratio", tmesh.get_aspect_ratio(0)),
+        ("Radii ratio", tmesh.get_radii_ratio()),
+        ("Radius\u2013edge ratio", tmesh.get_radius_edge_ratio()),
+        ("Regularity", tmesh.get_triangle_regularity()),
+        ("Angle deviation", tmesh.get_angle_deviation()),
+    ]
+
+    # Lucy is stored lying down, long axis along z with the pedestal at -z (the
+    # +z end is the wingspan, which is wider but is not the base). Standing her
+    # up is display-only: every metric above is rotation-invariant and is
+    # computed from the mesh exactly as stored.
+    flat_v = R.normalize_mesh(tmesh.vertices)
+    verts = torch.stack(
+        [flat_v[:, 0], flat_v[:, 2], -flat_v[:, 1]], dim=-1
+    ).contiguous()
+    faces = tmesh.triangles.int().contiguous()
+    # A per-triangle field needs per-triangle vertices.
+    ex_v = verts[faces.long()].reshape(-1, 3).contiguous()
+    ex_f = torch.arange(ex_v.shape[0], device=DEV, dtype=torch.int32).reshape(-1, 3)
+
+    shot = dict(flat=True, azimuth=AZ_QUALITY, elevation=16, rim_strength=0.15)
+    accents = [(150, 158, 176), (251, 113, 133), (251, 191, 36),
+               (34, 211, 238), (118, 185, 0), (167, 139, 250)]
+
+    panels = [rnd.render(verts, faces, base=GT_TINT, **shot)]
+    labels = ["Quality"]
+    subs = [f"min {q_min:.3f} \u00b7 mean {q_mean:.3f}"
+            f"\nvalence 5\u20137: {valence:.1f}%"]
+
+    for name, values in fields:
+        vals = values.detach().float().reshape(-1)
+        # One ramp for every field, so a colour means the same thing throughout.
+        rgb = torch.from_numpy(
+            compose.colormap(vals.cpu().numpy(), "viridis")
+        ).float().to(DEV)
+        cols = rgb[:, None, :].expand(-1, 3, -1).reshape(-1, 3).contiguous()
+        panels.append(rnd.render(ex_v, ex_f, colors=cols, **shot))
+        labels.append(name)
+        subs.append(f"mean {float(vals.mean()):.3g}")
+        print(f"    {name:<20} mean {float(vals.mean()):.4g}  "
+              f"range {float(vals.min()):.3g} \u2013 {float(vals.max()):.3g}")
+
+    compose.save(
+        compose.grid(compose.trim(panels), labels, sublabels=subs, cols=3,
+                     accents=accents),
+        OUT / "fig-quality.png",
+    )
+
+
 def _asset(name):
     import conquer3d.data.assets as assets
 
@@ -1093,6 +1164,7 @@ FIGURES = [
     ("meshbvh", fig_meshbvh, True),
     ("normals", fig_normals, True),
     ("hermite", fig_hermite, True),
+    ("quality", fig_quality, True),
 ]
 
 

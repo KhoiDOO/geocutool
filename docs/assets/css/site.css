@@ -293,8 +293,8 @@ html[data-theme="light"] .btn-primary { color: #06210a; }
 .section { padding: 86px 0; border-bottom: 1px solid var(--line); }
 .section-head { max-width: 660px; margin-bottom: 44px; }
 .section-head .kicker {
-  font: 650 11.5px/1 var(--mono); letter-spacing: .085em; text-transform: uppercase; color: var(--accent);
-  display: block; margin-bottom: 13px;
+  font: 650 15px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+  display: block; margin-bottom: 15px;
 }
 .section-head p { color: var(--fg-mid); margin: 13px 0 0; font-size: 1.05rem; max-width: 74ch; }
 
@@ -636,7 +636,7 @@ html[data-theme="light"] .tok-fn { color: #0e7490; }
   .fig-grid--wide .fig-meta { grid-column: 1 / -1; grid-row: 4; margin-top: 18px; }
 }
 .fig-kicker {
-  display: block; font: 600 10.5px/1 var(--mono); letter-spacing: .1em;
+  display: block; font: 600 12px/1 var(--mono); letter-spacing: .1em;
   text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
 }
 .fig-meta {
