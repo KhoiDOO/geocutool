@@ -12,15 +12,15 @@
 [![Python Version](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.0%2B-76B900?logo=nvidia&logoColor=white&style=for-the-badge)](https://developer.nvidia.com/cuda-toolkit)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?logo=pytorch&logoColor=white&style=for-the-badge)](https://pytorch.org/)
-[![API Coverage](https://img.shields.io/badge/API_docs-1018_symbols_·_100%25-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
+[![API Coverage](https://img.shields.io/badge/API_docs-1020_symbols_·_100%25-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
 
 <p align="center">
   <b><a href="https://khoidoo.github.io/conquer3d/">🌐 Website</a></b> •
   <a href="https://khoidoo.github.io/conquer3d/documentation.html">Guide</a> •
   <a href="https://khoidoo.github.io/conquer3d/api/index.html">API Reference</a> •
   <a href="https://khoidoo.github.io/conquer3d/benchmarks.html">Benchmarks</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-features--highlights">Features</a>
+  <a href="#-qualitative-results">Results</a> •
+  <a href="#-installation">Installation</a>
 </p>
 
 </div>
@@ -61,274 +61,89 @@ verts.sum().backward()          # gradients flow back into the field
 
 ---
 
-## 📖 Documentation
+## 🔬 Qualitative Results
 
-**Full documentation lives at [khoidoo.github.io/conquer3d](https://khoidoo.github.io/conquer3d/).**
+Every figure below is real library output on the bundled benchmark assets, regenerated
+by `docs/_figures/make_figures.py` — nothing is mocked or hand-drawn. More, at full size,
+on the **[showcase](https://khoidoo.github.io/conquer3d/)**.
 
-| | |
-| :--- | :--- |
-| **[Showcase](https://khoidoo.github.io/conquer3d/)** | What the library is for, and how to start. |
-| **[Documentation](https://khoidoo.github.io/conquer3d/documentation.html)** | Installation, core concepts, architecture, and worked pipelines. |
-| **[API Reference](https://khoidoo.github.io/conquer3d/api/index.html)** | Every symbol, across seven tiers. |
-| **[Benchmarks](https://khoidoo.github.io/conquer3d/benchmarks.html)** | Measured extraction throughput on real geometry. |
-| **[About](https://khoidoo.github.io/conquer3d/about.html)** | Motivation and the research this builds on. |
+### Isosurface extraction
 
-The API reference does not stop at the Python surface. It descends through the pybind11 bindings and host dispatchers into the CUDA kernels themselves, the device helpers they call, and the inline math those are built from — **1018 symbols, fully documented**:
+<img src="docs/assets/img/fig-algorithms.webp" alt="Five extractors on one signed distance field" width="100%">
 
-| Tier | Layer | Symbols |
-| :--- | :--- | ---: |
-| **T1** | Python API | 159 |
-| **T2** | Native bindings (`conquer3d._C`) | 151 |
-| **T3** | Host dispatchers & C++ declarations | 437 |
-| **T4** | CUDA `__global__` kernels | 109 |
-| **T5** | CUDA `__device__` helpers | 69 |
-| **T6** | Inline math primitives | 65 |
-| **T7** | `__constant__` topology tables | 28 |
+One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed by five
+extractors, with the source mesh on the left. The lower row crops the crease where
+Marching Cubes and Dual Contouring disagree most.
+
+### Sharp features from Hermite data
+
+<img src="docs/assets/img/fig-hermite.webp" alt="Dual methods with and without Hermite data" width="100%">
+
+Dual Contouring and Dual Marching Cubes run twice each: once with normals interpolated
+from the grid, once with exact Hermite data from `compute_hermite_from_mesh`, which
+ray-casts all 25,832 sign-crossing edges for the true intersection and face normal.
+The crease is reconstructed rather than rounded.
+
+### Detail is a resolution dial
+
+<img src="docs/assets/img/fig-resolution.webp" alt="Resolution ladder from 64 to 2048 cubed" width="100%">
+
+Dual Marching Cubes on the Armadillo at seven grid resolutions from 64³ to 2048³.
+Face count runs from 12,076 to 13,294,500, with Chamfer and Hausdorff distance to the
+source measured at every step.
+
+### From mesh to surface, step by step
+
+<img src="docs/assets/img/fig-pipeline.webp" alt="Sparse grid construction and extraction" width="100%">
+
+The input mesh, the narrow-band cells allocated around it (7,863 of a possible 64,000
+at 40³), the signed distance shown as a cutaway, the 2,646 bipolar cells, and the
+extracted surface. No dense volume is ever held.
+
+### Six ways to decide inside
+
+<img src="docs/assets/img/fig-sign-modes.webp" alt="Six sign determination modes" width="100%">
+
+One axial slice signed by each of the six sign modes and contoured at zero — ray parity,
+pseudonormal, winding number, flood fill, hybrid consensus, and coarse-fine fill.
+
+### Ray queries against the hierarchies
+
+<img src="docs/assets/img/fig-meshbvh.webp" alt="Ray-triangle and ray-voxel queries" width="100%">
+
+`MeshBVH.get_ray_intersection` returns the triangles a ray pierces; `BVH.query_ray`
+returns the narrow-band cells it crosses. Five rays from five origins, each drawn as far
+as its own first hit.
 
 ---
 
 ## ⚡ Benchmarks
 
-*Measured on **NVIDIA GeForce RTX 4090** (torch 2.8.0+cu128, CUDA 12.8) on the **Fandisk CAD model** at **$1024^3$ resolution** (5.15M active cells). Timed with CUDA events around the operator alone, median of 7 runs after 2 warm-ups:*
+*RTX 4090, torch 2.8.0+cu128, CUDA 12.8. Fandisk at $1024^3$ (5.15M active cells).
+CUDA events around the operator alone, median of 7 runs after 2 warm-ups.*
 
-| Algorithm | Mesh Output | Extracted Vertices | Extracted Faces / Quads | Latency (ms) | Throughput |
+| Algorithm | Output | Vertices | Faces | Latency | Throughput |
 | :--- | :--- | ---: | ---: | ---: | ---: |
-| **DMC (pure quads)** | Pure Quads | 1,716,384 | 1,716,382 | **2.51 ms** | **684M faces/s** |
 | **Dual Marching Cubes** | Triangles | 1,716,384 | 3,432,764 | **2.62 ms** | **1,311M faces/s** |
+| DMC (pure quads) | Quads | 1,716,384 | 1,716,382 | 2.51 ms | 684M quads/s |
 | MC Asymptotic | Triangles | 1,716,382 | 3,432,760 | 2.71 ms | 1,267M faces/s |
 | Dual Contouring | Triangles | 1,716,384 | 3,432,764 | 3.88 ms | 884M faces/s |
 | Marching Cubes | Triangles | 1,716,382 | 3,432,760 | 7.90 ms | 434M faces/s |
 | Marching Tetrahedra | Triangles | 6,113,918 | 12,227,832 | 44.90 ms | 272M faces/s |
 
-All figures are produced by `docs/_figures/make_benchmarks.py` and can be reproduced. Sign-mode costs, pipeline setup breakdown and memory scaling are on the **[benchmarks page](https://khoidoo.github.io/conquer3d/benchmarks.html)**.
-
----
-
-## ✨ Features & Highlights
-
-<details open>
-<summary><b>🔷 1. Isosurface Extraction &amp; Meshing</b></summary>
-<br>
-
-- **Dual Marching Cubes (`dmc`)**: High-throughput manifold surface extraction with pure quad $(Q, 4)$ or triangle $(F, 3)$ outputs (~1.3B faces/s measured).
-- **Dual Contouring (`dc`)**: Sharp CAD crease and mechanical corner preservation via GPU Quadratic Error Function (QEF) solving.
-- **Marching Cubes Asymptotic (`mca`)**: Decider-enhanced Marching Cubes resolving topological face ambiguities on-the-fly.
-- **Differentiable Poisson Surface Reconstruction (`dpsr`, `DPSR`)**: Differentiable spectral Fourier Poisson indicator field solving directly from oriented point clouds.
-- **Differentiable Marching Cubes (`diff_marching_cubes`)**: PyTorch autograd gradient backpropagation through levelsets into SDF and color fields.
-- **Marching Tetrahedra (`marching_tetrahedra`, `marching_tetrahedra_grid`)**: Consistent isosurface extraction across unstructured meshes and regular cubic tetrahedral grids.
-
-</details>
-
-<details>
-<summary><b>🚀 2. Hardware-Accelerated Spatial Acceleration</b></summary>
-<br>
-
-- **Triangle Mesh BVH (`MeshBVH`)**: GPU Bounding Volume Hierarchy for fast ray intersections, point projections, and signed distance queries.
-- **Gaussian Splatting BVHs (`GSBVH`, `PGSBVH`)**: Spatial hierarchies specialized for 3D Gaussian Splatting and Periodic Gaussian Splatting.
-- **Radix Linear BVH (`BVH`)**: High-throughput parallel bounding volume hierarchy for generic 3D primitives.
-- **GPU KD-Tree (`KDTree`)**: Parallel nearest-neighbor search with $O(\log N)$ query complexity.
-- **Morton Z-Curve Sorting (`z_curve_sort`)**: 64-bit Radix-sorted space-filling curve indexing for maximizing GPU cache locality.
-- **Volumetric 3D Flood Fill**: Fast GPU bitmask ray-boundary flood fill for sign evaluation across complex geometries.
-
-</details>
-
-<details>
-<summary><b>🌐 3. Volumetric Grids &amp; Surface Conversions</b></summary>
-<br>
-
-- **Narrow-Band Sparse Voxel Grids (`create_voxel_grid_from_tmesh`)**: Direct surface-confined voxelization bypassing dense 3D memory.
-- **Multi-Mode Normal Field Generation**: On-the-fly extraction of exact CAD face normals (`mode=0`), smooth vertex normals (`mode=1`), or SDF gradients (`mode=2`).
-- **Mesh-to-Grid Pipelines (`tmesh2voxel`, `tmesh2sparse`)**: One-line conversion from 3D meshes to dense or sparse Signed Distance Fields.
-- **Depth-Map Surface Carving (`get_active_voxel_ids_from_depth`)**: Multi-view RGB-D depth image backprojection into active voxel grids.
-- **Sparse & Occupancy Conversions (`sparse_coo2dense_occ`, `dense_occ2sparse_coo`)**: Seamless conversion between sparse coordinate tensors and dense binary occupancy volumes.
-
-</details>
-
-<details>
-<summary><b>🎨 4. Radiance Fields &amp; Differentiable Primitives</b></summary>
-<br>
-
-- **3D Gaussian Splatting Primitives (`compute_gs_covi`, `compute_gs_aabb`)**: GPU-accelerated covariance matrices, Mahalanobis distances, and tight AABB computation.
-- **Periodic Gaussian Splatting (`solve_pgs_cluster_tangency_radius`)**: Spatial frequency-aware radiance field query operators.
-- **Geometric Primitive Structures (`Ray`, `Triangle`, `AABB`, `Edge`)**: Vectorized GPU ray tracing and collision primitives.
-
-</details>
-
-<details>
-<summary><b>📐 5. Geometric Distances &amp; Volume Integrals</b></summary>
-<br>
-
-- **Exact Chamfer Distances (`chamfer_distance`, `one_sided_chamfer_distance`)**: Point-to-point and point-to-mesh geometric error evaluation.
-- **Exact Hausdorff Distances (`hausdorff_distance`, `one_sided_hausdorff_distance`)**: Maximum deviation metrics for surface fidelity assessment.
-- **Single-View Volume Integrals (`single_view_volume_integral`)**: Analytical divergence-theorem ray volume integration.
-
-</details>
-
-<details>
-<summary><b>📦 6. 3D Data Loading, Augmentation &amp; Collation</b></summary>
-<br>
-
-- **Benchmark 3D Datasets (`Digit3D`, `PointDigit3D`, `RedWood`, `MeshDataset`)**: Ready-to-use PyTorch dataset abstractions.
-- **Standard Benchmark 3D Assets (`conquer3d.data.assets`)**: One-click download & caching for Stanford Bunny, Armadillo, Dragon, Lucy, Happy Buddha, Spot, Cow, Teapot, Suzanne, Fandisk, Iphigenia, and more.
-- **Geometric Data Augmentations (`Rotation`, `Scale`, `RandomRotation`, `RandomScale`, `Sequence`, `MeshSequence`)**: Composable spatial transformation pipelines.
-- **Custom PyTorch Batch Collation (`bmesh_collate_fn`, `sparse_collate_fn`)**: Efficient handling of variable-sized meshes and sparse tensors in DataLoaders.
-
-</details>
-
-<details>
-<summary><b>🛠️ 7. Procedural Generation &amp; File I/O</b></summary>
-<br>
-
-- **Procedural Mesh Generators (`create_sphere`, `create_tetrahedra`)**: Parametric geometric shape creation utilities.
-- **High-Performance Mesh I/O (`read_obj`, `write_obj`, `read_off`)**: Native loading and saving for vertices, faces, and vertex colors.
-
-</details>
-
----
-
-## 🚀 Quickstart Examples
-
-### 1. Differentiable Dual Marching Cubes (DMC)
-```python
-import torch
-from conquer3d.data_structure import create_voxel_grid
-from conquer3d.ops import dmc
-
-# Create 3D Voxel Grid
-grid_vertices, voxels, _ = create_voxel_grid(
-    grid_min=[-1.0, -1.0, -1.0], grid_max=[1.0, 1.0, 1.0], res=[64, 64, 64], device="cuda"
-)
-
-# Evaluate SDF & Feature Colors with autograd tracking
-sdf = (torch.norm(grid_vertices, dim=-1) - 0.6).requires_grad_(True)
-colors = torch.rand((grid_vertices.shape[0], 3), device="cuda", requires_grad=True)
-
-# Extract 2-manifold triangle mesh with Newton-Raphson levelset projection
-verts, faces, out_colors = dmc(
-    grid_vertices, voxels, sdf, colors=colors, iso=0.0, quad_split=True
-)
-
-# Extract pure quads (shape: (Q, 4))
-quad_verts, quad_faces = dmc(grid_vertices, voxels, sdf, iso=0.0, quad_split=False)
-
-# Backward gradient propagation
-loss = verts.sum() + out_colors.sum()
-loss.backward()
-print(f"SDF Gradient Norm: {sdf.grad.norm().item():.4f}")
-```
-
-### 2. Dual Contouring (DC) with Sharp CAD Feature Preservation
-```python
-import torch
-from conquer3d.data.assets import Fandisk
-from conquer3d.data_structure import TriangleMesh, create_voxel_grid_from_tmesh
-from conquer3d.ops import dc
-
-fandisk = Fandisk()
-v, f, _ = fandisk.get()
-tmesh = TriangleMesh(v.cuda(), f.cuda().int())
-
-# Build sparse grid and extract exact CAD triangle normals (mode=0)
-grid_vertices, voxels, _, grid_normals = create_voxel_grid_from_tmesh(
-    grid_min=[-1.0, -1.0, -1.0], grid_max=[1.0, 1.0, 1.0],
-    res=[256, 256, 256], tmesh=tmesh, pad=1, return_normals=True, normal_mode=0
-)
-
-# Query signed distance field via GPU Flood Fill
-tmesh.build_flood_fill_data([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], [256, 256, 256])
-_, _, _, sdfs = tmesh.query_points(grid_vertices, return_sdf=True, sign_mode=3)
-
-# Extract sharp mesh using GPU Jacobi SVD Quadratic Error Function solver
-verts, faces = dc(grid_vertices, voxels, sdfs, grid_normals=grid_normals, iso=0.0)
-print(f"Extracted Sharp CAD Mesh: {verts.shape[0]:,} vertices, {faces.shape[0]:,} faces")
-```
-
-### 3. GPU Spatial Queries & Mesh BVH
-```python
-import torch
-from conquer3d.data_structure import TriangleMesh
-
-# Query closest points, projections, and signed distances with Ray Casting / Flood Fill
-query_pts = torch.randn((100000, 3), device="cuda")
-query_ids, closest_tri_ids, projected_pts, sdfs = tmesh.query_points(
-    query_pts, return_sdf=True, return_prj_pts=True, sign_mode=0
-)
-```
-
-> [!TIP]
-> More worked pipelines, the core concepts behind them, and the full operator reference are on the
-> **[documentation site](https://khoidoo.github.io/conquer3d/documentation.html)**.
+Sign-mode costs, distance-operator throughput, pipeline breakdown and memory scaling are
+on the **[benchmarks page](https://khoidoo.github.io/conquer3d/benchmarks.html)**.
 
 ---
 
 ## 📦 Installation
 
-### 1. Install via PyPI
 ```bash
 pip install -U conquer3d
 ```
 
-Prebuilt CUDA wheels are attached to each release for **Python 3.10–3.14** against **PyTorch 2.8 and 2.11** (CUDA 12.8).
-
-### 2. Docker (Recommended for instant GPU / CUDA environment)
-```bash
-# Pull and run the pre-built image
-docker pull kohido/conquer3d:latest
-docker run --rm --gpus all -it kohido/conquer3d:latest bash
-```
-
-Or build locally:
-```bash
-docker build -t conquer3d:latest .
-docker run --rm --gpus all -it conquer3d:latest bash
-```
-
-### 3. Build from Source
-Ensure you have a compatible CUDA toolkit ($\ge 12.0$) and PyTorch installed:
-
-```bash
-# Optional: Setup Conda environment
-conda create -c conda-forge -n conquer3d python=3.10 gxx_linux-64=13 gcc_linux-64=13 sparsehash -y
-conda activate conquer3d
-conda install nvidia::cuda-toolkit==12.8.2 -y
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-pip install pybind11-stubgen
-
-# Install Conquer3D
-git clone https://github.com/KhoiDOO/conquer3d.git
-cd conquer3d
-pip install -e . --no-build-isolation
-```
-
-> [!NOTE]
-> Importing `conquer3d` loads the compiled `_C` extension at module scope, so a CUDA-capable device
-> and a matching PyTorch build are required.
-
----
-
-## 📚 Acknowledgements & References
-
-For further theoretical background, GPU collision detection guides, and related literature, please visit:
-
-- **[Research Papers](acknowledgement/REFERENCE.md)**: Computational geometry, differential topology, and acceleration structure foundations.
-- **[Blog Posts](acknowledgement/BLOG_POST.md)**: GPU spatial traversal, parallel BVH construction, and CUDA optimization guides.
-- **[Related Repositories](acknowledgement/REPOSITORY.md)**: Open-source geometric deep learning ecosystem.
-- **[Books](acknowledgement/BOOK.md)**: Core computational geometry references.
-
-A rendered bibliography is also available on the **[About page](https://khoidoo.github.io/conquer3d/about.html)**.
-
----
-
-## 📝 Citation
-
-```bibtex
-@software{conquer3d,
-  title   = {Conquer3D: GPU-Accelerated Differentiable Geometry and Spatial Computing},
-  author  = {Do, Hoang Khoi},
-  year    = {2025},
-  url     = {https://github.com/KhoiDOO/conquer3d}
-}
-```
+Building from source, the full feature list, worked pipelines and the 1,020-symbol API
+reference are on the **[documentation site](https://khoidoo.github.io/conquer3d/documentation.html)**.
 
 ---
 

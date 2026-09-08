@@ -2,10 +2,12 @@
 
 # Exclude unnecessary files and folders from GitHub release source archives
 .agents export-ignore
+.github export-ignore
 .cache export-ignore
 .vscode export-ignore
 .editorconfig export-ignore
 experiments/ export-ignore
+examples/ export-ignore
 setup/ export-ignore
 Dockerfile export-ignore
 docker-compose.yml export-ignore
@@ -13,3 +15,7 @@ release.py export-ignore
 release_notes.txt export-ignore
 output.log export-ignore
 data/ export-ignore
+# The built documentation site is served from GitHub Pages, not consumed from a
+# source tarball, and is by far the largest thing in the tree -- keep it out of
+# the release source archives.
+docs/ export-ignore
