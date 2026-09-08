@@ -56,11 +56,7 @@ __device__ __forceinline__ float3 compute_trilinear_normal(
                       v   * ((1.0f - u) * (s[7] - s[3]) + u * (s[6] - s[2]));
 
     float3 grad = make_float3(du / dx, dv / dy, dw / dz);
-    float len = maths::norm(grad);
-    if (len > 1e-8f) {
-        return grad * (1.0f / len);
-    }
-    return make_float3(0.0f, 0.0f, 1.0f);
+    return maths::normalize_safe(grad);
 }
 
 // Compute minimum angle of a 3D triangle in radians
@@ -91,9 +87,9 @@ __device__ __forceinline__ float triangle_min_angle(
     float cos1 = -maths::dot(e0, e1) / (l0 * l1);
     float cos2 = -maths::dot(e1, e2) / (l1 * l2);
 
-    cos0 = fmaxf(-1.0f, fminf(1.0f, cos0));
-    cos1 = fmaxf(-1.0f, fminf(1.0f, cos1));
-    cos2 = fmaxf(-1.0f, fminf(1.0f, cos2));
+    cos0 = maths::clamp(cos0, -1.0f, 1.0f);
+    cos1 = maths::clamp(cos1, -1.0f, 1.0f);
+    cos2 = maths::clamp(cos2, -1.0f, 1.0f);
 
     return fminf(acosf(cos0), fminf(acosf(cos1), acosf(cos2)));
 }
@@ -184,7 +180,7 @@ __global__ void compute_dual_vertices_kernel(
         // Bipolar test
         if ((s0 < iso && s1 >= iso) || (s0 >= iso && s1 < iso)) {
             float t = (iso - s0) / (s1 - s0);
-            t = fmaxf(0.0f, fminf(1.0f, t));
+            t = maths::saturate(t);
 
             float3 pt;
             float3 n;
@@ -200,7 +196,7 @@ __global__ void compute_dual_vertices_kernel(
                 }
             }
             if (!have_hermite) {
-                pt = p[v0] + (p[v1] - p[v0]) * t;
+                pt = maths::lerp(p[v0], p[v1], t);
             }
             pts[count] = pt;
 
@@ -209,13 +205,11 @@ __global__ void compute_dual_vertices_kernel(
             } else if (grid_normals != nullptr) {
                 float3 n0 = grid_normals[c_idx[v0]];
                 float3 n1 = grid_normals[c_idx[v1]];
-                float3 n_interp = n0 + (n1 - n0) * t;
-                float len = maths::norm(n_interp);
-                n = (len > 1e-8f) ? (n_interp * (1.0f / len)) : make_float3(0, 0, 1);
+                n = maths::normalize_safe(maths::lerp(n0, n1, t));
             } else {
-                float u = dc_corner_uvw[v0][0] + (dc_corner_uvw[v1][0] - dc_corner_uvw[v0][0]) * t;
-                float v = dc_corner_uvw[v0][1] + (dc_corner_uvw[v1][1] - dc_corner_uvw[v0][1]) * t;
-                float w = dc_corner_uvw[v0][2] + (dc_corner_uvw[v1][2] - dc_corner_uvw[v0][2]) * t;
+                float u = maths::lerp(dc_corner_uvw[v0][0], dc_corner_uvw[v1][0], t);
+                float v = maths::lerp(dc_corner_uvw[v0][1], dc_corner_uvw[v1][1], t);
+                float w = maths::lerp(dc_corner_uvw[v0][2], dc_corner_uvw[v1][2], t);
                 n = compute_trilinear_normal(u, v, w, s, dx, dy, dz);
             }
             normals[count] = n;
@@ -507,9 +501,9 @@ __global__ void compact_dual_vertices_and_colors_kernel(
         float dy = fmaxf(c_max.y - c_min.y, 1e-6f);
         float dz = fmaxf(c_max.z - c_min.z, 1e-6f);
 
-        float u = fmaxf(0.0f, fminf(1.0f, (v.x - c_min.x) / dx));
-        float val_v = fmaxf(0.0f, fminf(1.0f, (v.y - c_min.y) / dy));
-        float w = fmaxf(0.0f, fminf(1.0f, (v.z - c_min.z) / dz));
+        float u = maths::saturate((v.x - c_min.x) / dx);
+        float val_v = maths::saturate((v.y - c_min.y) / dy);
+        float w = maths::saturate((v.z - c_min.z) / dz);
 
         #pragma unroll
         for (int ch = 0; ch < num_channels; ++ch) {

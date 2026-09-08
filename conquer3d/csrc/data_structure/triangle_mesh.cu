@@ -524,9 +524,9 @@ __global__ void compute_vertex_normals_kernel(
                 float3 e1 = maths::normalize(v2 - v1);
                 float3 e2 = maths::normalize(v0 - v2);
 
-                float a0 = acosf(fminf(fmaxf(-maths::dot(e0, e2), -1.0f), 1.0f));
-                float a1 = acosf(fminf(fmaxf(-maths::dot(e1, e0), -1.0f), 1.0f));
-                float a2 = acosf(fminf(fmaxf(-maths::dot(e2, e1), -1.0f), 1.0f));
+                float a0 = acosf(maths::clamp(-maths::dot(e0, e2), -1.0f, 1.0f));
+                float a1 = acosf(maths::clamp(-maths::dot(e1, e0), -1.0f, 1.0f));
+                float a2 = acosf(maths::clamp(-maths::dot(e2, e1), -1.0f, 1.0f));
 
                 if (isfinite(a0)) {
                     atomicAdd(&vertex_normals[tri.x].x, a0 * n.x);

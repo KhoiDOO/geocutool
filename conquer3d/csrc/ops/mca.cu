@@ -426,15 +426,15 @@ __global__ void interpolate_vertices_and_features_kernel(
     float s1 = sdf[v1];
 
     float t = (iso - s0) / (s1 - s0 + 1e-8f);
-    t = fminf(fmaxf(t, 0.0f), 1.0f);
+    t = maths::saturate(t);
 
-    out_vertices[idx] = p0 + (p1 - p0) * t;
+    out_vertices[idx] = maths::lerp(p0, p1, t);
 
     if (in_colors != nullptr && out_colors != nullptr) {
         for (int c = 0; c < num_color_channels; ++c) {
             float c0 = in_colors[v0 * num_color_channels + c];
             float c1 = in_colors[v1 * num_color_channels + c];
-            out_colors[idx * num_color_channels + c] = c0 + (c1 - c0) * t;
+            out_colors[idx * num_color_channels + c] = maths::lerp(c0, c1, t);
         }
     }
 }
@@ -496,7 +496,7 @@ __global__ void backward_dmca_kernel(
 
     float g_feat_dot = 0.0f;
     float t = (iso - s0) / (denom + 1e-8f);
-    t = fminf(fmaxf(t, 0.0f), 1.0f);
+    t = maths::saturate(t);
 
     if (grad_colors != nullptr && in_colors != nullptr && grad_in_colors != nullptr) {
         for (int c = 0; c < num_color_channels; ++c) {

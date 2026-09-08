@@ -347,16 +347,16 @@ __global__ void interpolate_vertices_kernel(
         }
         else
         {
-            float t = (val1 != val0) ? fmaxf(0.0f, fminf(1.0f, (iso - val0) / (val1 - val0))) : 0.5f;
+            float t = (val1 != val0) ? maths::saturate((iso - val0) / (val1 - val0)) : 0.5f;
 
-            p = p0 + (p1 - p0) * t;
+            p = maths::lerp(p0, p1, t);
             
             if (has_normals) {
-                n = n0 + (n1 - n0) * t;
+                n = maths::lerp(n0, n1, t);
                 n = maths::normalize(n);
             }
             if (has_colors) {
-                c = c0 + (c1 - c0) * t;
+                c = maths::lerp(c0, c1, t);
             }
         }
 
@@ -859,7 +859,7 @@ __global__ void backward_dmc_kernel(
                 t = 1.0f;
             else if (fabsf(diff) >= EPS)
             {
-                t = fmaxf(0.0f, fminf(1.0f, (iso - v0_val) / diff));
+                t = maths::saturate((iso - v0_val) / diff);
             }
 
             float t0 = 1.0f - t;

@@ -111,9 +111,9 @@ __device__ __forceinline__ float triangle_min_angle(
     float cos1 = -maths::dot(e0, e1) / (l0 * l1);
     float cos2 = -maths::dot(e1, e2) / (l1 * l2);
 
-    cos0 = fmaxf(-1.0f, fminf(1.0f, cos0));
-    cos1 = fmaxf(-1.0f, fminf(1.0f, cos1));
-    cos2 = fmaxf(-1.0f, fminf(1.0f, cos2));
+    cos0 = maths::clamp(cos0, -1.0f, 1.0f);
+    cos1 = maths::clamp(cos1, -1.0f, 1.0f);
+    cos2 = maths::clamp(cos2, -1.0f, 1.0f);
 
     float a0 = acosf(cos0);
     float a1 = acosf(cos1);
@@ -459,11 +459,11 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
             float s0 = s[v0];
             float s1 = s[v1];
             float t = (iso - s0) / (s1 - s0);
-            t = fmaxf(0.0f, fminf(1.0f, t));
+            t = maths::saturate(t);
 
-            float u_e = dmc_corner_uvw[v0][0] + (dmc_corner_uvw[v1][0] - dmc_corner_uvw[v0][0]) * t;
-            float v_e = dmc_corner_uvw[v0][1] + (dmc_corner_uvw[v1][1] - dmc_corner_uvw[v0][1]) * t;
-            float w_e = dmc_corner_uvw[v0][2] + (dmc_corner_uvw[v1][2] - dmc_corner_uvw[v0][2]) * t;
+            float u_e = maths::lerp(dmc_corner_uvw[v0][0], dmc_corner_uvw[v1][0], t);
+            float v_e = maths::lerp(dmc_corner_uvw[v0][1], dmc_corner_uvw[v1][1], t);
+            float w_e = maths::lerp(dmc_corner_uvw[v0][2], dmc_corner_uvw[v1][2], t);
 
             u_sum += u_e;
             v_sum += v_e;
@@ -489,9 +489,9 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
             // Fast path: use precomputed inside-voxel vertex directly
             out_vertices[dual_vert_idx] = precomputed_vertices[m];
             float3 pt = precomputed_vertices[m];
-            u = fmaxf(0.0f, fminf(1.0f, (pt.x - c_min.x) / dx));
-            v = fmaxf(0.0f, fminf(1.0f, (pt.y - c_min.y) / dy));
-            w = fmaxf(0.0f, fminf(1.0f, (pt.z - c_min.z) / dz));
+            u = maths::saturate((pt.x - c_min.x) / dx);
+            v = maths::saturate((pt.y - c_min.y) / dy);
+            w = maths::saturate((pt.z - c_min.z) / dz);
         } else if (use_hermite && h_count > 0) {
             // Solve the quadratic error function over THIS contour's Hermite data.
             // Restricting the solve to one contour is what keeps a cell that carries
@@ -499,9 +499,9 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
             // guarantee survives while each vertex still lands on its own feature.
             float3 pt = maths::solve_qef(h_pts, h_nrm, h_count, c_min, c_max, 0.01f);
             out_vertices[dual_vert_idx] = pt;
-            u = fmaxf(0.0f, fminf(1.0f, (pt.x - c_min.x) / dx));
-            v = fmaxf(0.0f, fminf(1.0f, (pt.y - c_min.y) / dy));
-            w = fmaxf(0.0f, fminf(1.0f, (pt.z - c_min.z) / dz));
+            u = maths::saturate((pt.x - c_min.x) / dx);
+            v = maths::saturate((pt.y - c_min.y) / dy);
+            w = maths::saturate((pt.z - c_min.z) / dz);
         } else {
             // Newton-Raphson Level-Set Projection
             for (int iter = 0; iter < project_iters; ++iter) {
@@ -510,9 +510,9 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
                 float len_sq = grad.x * grad.x + grad.y * grad.y + grad.z * grad.z;
                 if (len_sq > 1e-8f) {
                     float step = 0.5f * (iso - f_val) / len_sq;
-                    u = fmaxf(0.0f, fminf(1.0f, u + step * grad.x));
-                    v = fmaxf(0.0f, fminf(1.0f, v + step * grad.y));
-                    w = fmaxf(0.0f, fminf(1.0f, w + step * grad.z));
+                    u = maths::saturate(u + step * grad.x);
+                    v = maths::saturate(v + step * grad.y);
+                    w = maths::saturate(w + step * grad.z);
                 }
             }
 

@@ -233,16 +233,8 @@ __global__ void filter_ray_triangle_intersections_kernel(
         float3 v2 = vertices[tri.z];
         float3 centroid = (v0 + v1 + v2) / 3.0f;
 
-        float3 ray_dir = centroid - p;
-        float dir_len = maths::norm(ray_dir);
-        if (dir_len > 1e-6f)
-        {
-            ray_dir = ray_dir / dir_len;
-        }
-        else
-        {
-            ray_dir = make_float3(1.0f, 0.0f, 0.0f);
-        }
+        float3 ray_dir = maths::normalize_safe(
+            centroid - p, make_float3(1.0f, 0.0f, 0.0f), 1e-6f);
 
         Ray ray2(p, ray_dir, 0.0f);
 
@@ -452,7 +444,7 @@ __global__ void filter_ray_triangle_intersections_kernel(
             float3 u0 = v1 - v0;
             float len2_0 = maths::dot2(u0);
             if (len2_0 > 1e-10f) {
-                float t0 = fminf(fmaxf(maths::dot(best_pt - v0, u0) / len2_0, 0.0f), 1.0f);
+                float t0 = maths::saturate(maths::dot(best_pt - v0, u0) / len2_0);
                 if (maths::dot2(v0 + t0 * u0 - best_pt) <= eps_sq) {
                     N = pseudonormal_edges[3 * best_tri_id + 0];
                     found = true;
@@ -463,7 +455,7 @@ __global__ void filter_ray_triangle_intersections_kernel(
             float3 u1 = v2 - v1;
             float len2_1 = maths::dot2(u1);
             if (len2_1 > 1e-10f) {
-                float t1 = fminf(fmaxf(maths::dot(best_pt - v1, u1) / len2_1, 0.0f), 1.0f);
+                float t1 = maths::saturate(maths::dot(best_pt - v1, u1) / len2_1);
                 if (maths::dot2(v1 + t1 * u1 - best_pt) <= eps_sq) {
                     N = pseudonormal_edges[3 * best_tri_id + 1];
                     found = true;
@@ -474,7 +466,7 @@ __global__ void filter_ray_triangle_intersections_kernel(
             float3 u2 = v0 - v2;
             float len2_2 = maths::dot2(u2);
             if (len2_2 > 1e-10f) {
-                float t2 = fminf(fmaxf(maths::dot(best_pt - v2, u2) / len2_2, 0.0f), 1.0f);
+                float t2 = maths::saturate(maths::dot(best_pt - v2, u2) / len2_2);
                 if (maths::dot2(v2 + t2 * u2 - best_pt) <= eps_sq) {
                     N = pseudonormal_edges[3 * best_tri_id + 2];
                     found = true;

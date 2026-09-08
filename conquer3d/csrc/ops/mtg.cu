@@ -338,13 +338,13 @@ __global__ void interpolate_vertices_kernel(
         } else if (fabsf(val0 - val1) < EPS) {
             p = p0; if (has_normals) n = n0; if (has_colors) c = c0;
         } else {
-            float t = (val1 != val0) ? fmaxf(0.0f, fminf(1.0f, (iso - val0) / (val1 - val0))) : 0.5f;
-            p = p0 + (p1 - p0) * t;
+            float t = (val1 != val0) ? maths::saturate((iso - val0) / (val1 - val0)) : 0.5f;
+            p = maths::lerp(p0, p1, t);
             if (has_normals) {
-                n = n0 + (n1 - n0) * t;
+                n = maths::lerp(n0, n1, t);
                 n = maths::normalize(n);
             }
-            if (has_colors) c = c0 + (c1 - c0) * t;
+            if (has_colors) c = maths::lerp(c0, c1, t);
         }
 
         out_verts[v_idx] = p;
@@ -823,7 +823,7 @@ __global__ void backward_kernel(
             float t = 0.5f;
             if (fabsf(iso - v0_val) < EPS) t = 0.0f;
             else if (fabsf(iso - v1_val) < EPS) t = 1.0f;
-            else if (fabsf(diff) >= EPS) t = fmaxf(0.0f, fminf(1.0f, (iso - v0_val) / diff));
+            else if (fabsf(diff) >= EPS) t = maths::saturate((iso - v0_val) / diff);
 
             float t0 = 1.0f - t;
             float t1 = t;

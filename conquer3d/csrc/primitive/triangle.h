@@ -226,9 +226,9 @@ struct Triangle {
         float d1 = maths::dot(e10, e12) / fmaxf(n01 * n12, 1e-8f);
         float d2 = maths::dot(e20, e21) / fmaxf(n02 * n12, 1e-8f);
 
-        a0 = acosf(fmaxf(-1.0f, fminf(1.0f, d0)));
-        a1 = acosf(fmaxf(-1.0f, fminf(1.0f, d1)));
-        a2 = acosf(fmaxf(-1.0f, fminf(1.0f, d2)));
+        a0 = acosf(maths::clamp(d0, -1.0f, 1.0f));
+        a1 = acosf(maths::clamp(d1, -1.0f, 1.0f));
+        a2 = acosf(maths::clamp(d2, -1.0f, 1.0f));
     }
 
     /**
