@@ -162,93 +162,78 @@ BENCHMARKS = [
 FIGURES = [
     (
         "fig-pipeline", "From mesh to surface, step by step", "Pipeline",
-        "The whole extraction, one stage per panel. A triangle mesh goes in; only the "
-        "cells the surface actually crosses are allocated (7,863 of a possible 64,000 at "
-        "40³); each grid vertex is given a distance and a sign; the cells whose corners "
-        "straddle the isolevel are selected; and those cells are marched into a surface. "
-        "The third panel is cut away because from outside every visible cell is positive — "
-        "the sign change only shows through the band.",
+        "Each stage of one extraction, left to right: the input triangle mesh, the "
+        "narrow-band cells allocated around it (7,863 of a possible 64,000 at 40³), "
+        "the signed distance at each grid vertex shown as a cutaway, the 2,646 "
+        "bipolar cells whose corners straddle the isolevel, and the extracted "
+        "surface.",
         ["Spot", "40³ grid", "7,863 cells", "2,646 bipolar"], True,
     ),
     (
         "fig-algorithms", "Isosurface Extraction", "Comparison",
-        "The source mesh leads, then the same signed distance field meshed five ways. The "
-        "field is carried on a narrow-band sparse grid — 19,329 of the 262,144 cells a "
-        "dense 64³ volume would hold, 7.4% — and every extractor consumes that same sparse "
-        "triple. Marching Cubes and its asymptotic variant round the crease into a "
-        "staircase; Dual Contouring's QEF solve snaps the vertex onto the feature; Dual "
-        "Marching Cubes holds manifold topology throughout; Marching Tetrahedra splits each "
-        "cell into six tetrahedra and emits roughly 3.5× the faces for it. The close crop "
-        "is placed automatically at the point where MC and DC disagree most, measured with "
-        "the library's own Chamfer distance.",
+        "One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed "
+        "by five extractors. The source mesh is on the left. The lower row is a close "
+        "crop of the same five surfaces at the crease, placed at the point of largest "
+        "disagreement between Marching Cubes and Dual Contouring.",
         ["Fandisk", "ground truth first", "64³ narrow band", "19,329 cells"], True,
     ),
     (
         "fig-resolution", "Detail is a resolution dial", "Scaling",
-        "Dual Marching Cubes on the Armadillo across seven grid resolutions, against the "
-        "source mesh. Face count grows from 12,076 to 13,294,500 while the "
-        "extraction code and the field are unchanged. Each panel reports Chamfer and "
-        "Hausdorff distance to the original, measured with the library's own metrics on "
-        "200,000 area-weighted surface samples: Chamfer falls from 8.54e-3 "
-        "to 4.80e-3 and Hausdorff from 46.2e-3 to "
-        "12.8e-3, both flattening by 512³ — past that the extraction "
-        "has converged to within the sampling floor of the measurement. Above 1024³ the sign "
-        "comes from the coarse-fine flood fill, since a dense one at 1536³ would need 13.5 GB.",
+        "Dual Marching Cubes on the Armadillo at seven grid resolutions from 64³ to "
+        "2048³, with the source mesh on the left. Face count runs from 12,076 to "
+        "13,294,500. Each panel carries its Chamfer and Hausdorff distance to the "
+        "source, measured from 200,000 area-weighted surface samples.",
         ["Armadillo", "ground truth first", "64³ → 2048³", "12k → 13.3M faces",
          "Chamfer + Hausdorff"], True,
     ),
     (
         "fig-sign-modes", "Six ways to decide inside", "Robustness",
         "The source mesh, then one axial slice through it signed by each of the six "
-        "available modes "
-        "and contoured at zero. Ray parity misclassifies a scatter of points in the upper "
-        "left where rays graze the surface; pseudonormals and winding numbers are clean; the "
-        "flood-fill modes quantise the boundary to their occupancy grid. Most libraries give "
-        "you exactly one of these.",
+        "sign modes and contoured at zero. Blue is inside, red is outside, and the "
+        "green line is the zero level set.",
         ["Bimba", "sign_mode 0–5", "320² slice"], True,
     ),
     (
         "fig-meshbvh", "One ray, two hierarchies", "Queries",
-        "A sphere from `create_sphere` and a single ray, put to two different "
-        "accelerators. On the left, `MeshBVH.get_ray_intersection` walks a hierarchy "
-        "over the 780 triangles and returns the two the ray actually pierces — entry "
-        "and exit — out of the whole mesh. On the right, the same ray is traced through "
-        "the narrow-band voxel grid: `BVH.query_ray` over the 3,766 cell boxes returns "
-        "the 15 the ray crosses. Both queries are exact, and neither ever visits the "
-        "primitives it does not touch — that is the whole point of the hierarchy.",
+        "A sphere from `create_sphere` and one ray. On the left, the two triangles of "
+        "780 that `MeshBVH.get_ray_intersection` reports the ray piercing. On the "
+        "right, the 15 cells of 3,766 that `BVH.query_ray` reports it crossing.",
         ["create_sphere", "780 triangles", "3,766 cells", "Möller–Trumbore"], True,
     ),
     (
+        "fig-normals", "Orientation, extractor by extractor", "Orientation",
+        "Surface orientation as colour, each axis of the unit normal mapped to a "
+        "channel. The ground truth is on the left, after `fix_normals`. The top row "
+        "is the same field meshed by five extractors at 256³. The bottom row is each "
+        "extracted normal's angle from the ground-truth normal at the point it "
+        "projects onto, with medians between 3.3° and 4.1°.",
+        ["XYZ RGB Dragon", "fix_normals", "256³ grid", "5 extractors"], True,
+    ),
+    (
         "fig-zcurve", "Sorting for cache locality", "Locality",
-        "45,000 surface samples, coloured by their position in the array rather than by any "
-        "geometric quantity. In insertion order the colours are noise — neighbouring array "
-        "entries are scattered across the model, so every traversal is a random memory "
-        "access. After `z_curve_sort` the same colouring resolves into coherent regions, "
-        "because the Morton code interleaves the coordinate bits and places nearby points "
-        "at nearby addresses. This ordering is what every hierarchy in the library is built on.",
+        "45,000 surface samples coloured by their index in the array, before and "
+        "after `z_curve_sort` reorders them by 64-bit Morton code.",
         ["Armadillo", "45,000 points", "64-bit Morton codes"], True,
     ),
     (
         "fig-curvature", "Curvature via Laplace–Beltrami operator", "Analysis",
-        "Per-vertex curvature over 134,345 vertices of the Igea bust, computed with the "
-        "cotangent Laplace–Beltrami operator and mixed Voronoi areas, shown beside the "
-        "unshaded source. Mean curvature and the first principal curvature pick out the "
-        "eyelids, lips and braid detail that Gaussian curvature alone flattens.",
+        "Per-vertex curvature over the Igea bust's 134,345 vertices from the "
+        "cotangent Laplace–Beltrami operator with mixed Voronoi areas, beside the "
+        "unshaded source. Mean curvature and the first principal curvature are shown "
+        "on a diverging scale, Gaussian curvature on its own.",
         ["Igea", "ground truth first", "134,345 vertices", "cotangent operator"], False,
     ),
     (
         "fig-normal-modes", "The field Dual Contouring solves against", "Normals",
-        "Dual Contouring is only as sharp as the normals it is given. Against the source "
-        "mesh: exact CAD face normals produce a clean surface; smooth vertex normals soften "
-        "it; deriving normals from the SDF gradient introduces the visible speckle that a "
-        "QEF then faithfully reproduces.",
+        "Dual Contouring at 224³ on the RockerArm under the three normal modes, "
+        "against the source mesh: exact face normals, smooth vertex normals, and "
+        "normals taken from the SDF gradient.",
         ["RockerArm", "ground truth first", "normal_mode 0/1/2", "224³ grid"], False,
     ),
     (
         "fig-sdf-slices", "The field behind the surface", "Fields",
-        "The source mesh, then three axial slices of the signed distance field around it "
-        "with the zero level set drawn in green. This is the quantity every extractor in the "
-        "library consumes — the mesh is just where this field crosses zero.",
+        "The source mesh, then three axial slices of the signed distance field around "
+        "it at z = −0.25, 0.00 and +0.25, with the zero level set drawn in green.",
         ["Spot", "ground truth first", "3 slices", "zero level set"], False,
     ),
 ]
@@ -260,6 +245,7 @@ FIGURES = [
 # volume is hiding behind a picture of a mesh.
 SPARSE_EXTRACTION = {
     "fig-algorithms", "fig-normal-modes", "fig-resolution", "fig-pipeline",
+    "fig-normals",
 }
 
 # Uses the same sparse grid, but for traversal rather than extraction.
@@ -267,12 +253,11 @@ SPARSE_QUERY = {"fig-meshbvh"}
 
 SPARSE_NOTE = (
     "Sparse grid. The isosurface is extracted from a narrow-band sparse voxel "
-    "grid built by `create_voxel_grid_from_tmesh` \u2014 only the cells the "
-    "surface actually crosses are allocated. No dense volume is ever held."
+    "grid built by `create_voxel_grid_from_tmesh`."
 )
 SPARSE_QUERY_NOTE = (
     "Sparse grid. The voxels traversed here are the narrow band from "
-    "`create_voxel_grid_from_tmesh`, not a dense volume."
+    "`create_voxel_grid_from_tmesh`."
 )
 
 

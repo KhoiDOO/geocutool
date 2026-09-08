@@ -24,7 +24,7 @@
 <body>
 <header class="nav">
   <a class="brand" href="../index.html">
-    <span class="mark"></span> Conquer3D <span class="ver">v0.7.3</span>
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.4</span>
   </a>
   <nav class="nav-tabs"><a href="../index.html" class="">Showcase</a><a href="../documentation.html" class="">Documentation</a><a href="../api/index.html" class="active">API Reference</a><a href="../benchmarks.html" class="">Benchmarks</a><a href="../about.html" class="">About</a></nav>
   <div class="nav-right">
@@ -45,7 +45,7 @@
 <span class="tok-pre">&gt;&gt;&gt;</span> verts, faces = <span class="tok-fn">create_sphere</span>(sectors=<span class="tok-num">64</span>, stacks=<span class="tok-num">32</span>, radius=<span class="tok-num">1.0</span>)</code></pre></div></section><section class="sym" id="conquer3d.creation.triangle_creation.create_tetrahedra"><div class="sym-head"><span class="sym-name">conquer3d.creation.triangle_creation.create_tetrahedra</span><span class="badge">function</span><a class="sym-anchor" href="#conquer3d.creation.triangle_creation.create_tetrahedra">#</a><a class="sym-src" href="https://github.com/KhoiDOO/conquer3d/blob/main/conquer3d/creation/triangle_creation.py#L38">conquer3d/creation/triangle_creation.py:38</a></div><div class="sym-body"><div class="signature">conquer3d.creation.triangle_creation.<span class="tok-fn">create_tetrahedra</span>(radius: float = <span class="tok-num">1.0</span>) -&gt; Tuple[torch.Tensor, torch.Tensor]</div><p class="summary">Generates a regular canonical tetrahedron mesh.</p><div class="field-head">Parameters</div><div class="table-wrap"><table class="params"><thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td class="pname">radius</td><td class="ptype">float</td><td class="pdef">optional</td><td class="pdesc">Circumscribed radius of the tetrahedron. Defaults to 1.0.</td></tr></tbody></table></div><div class="field-head">Returns</div><div class="signature">Tuple[torch.Tensor, torch.Tensor]</div><div class="table-wrap"><table class="params"><thead><tr><th>Element</th><th>Type</th><th>Description</th></tr></thead><tbody><tr><td class="pname">vertices</td><td class="ptype">torch.Tensor</td><td class="pdesc">Float32 tensor of shape <code>(4, 3)</code> with 4 vertex coordinates.</td></tr><tr><td class="pname">triangles</td><td class="ptype">torch.Tensor</td><td class="pdesc">Int32 tensor of shape <code>(4, 3)</code> with 4 outward triangle faces.</td></tr></tbody></table></div><div class="field-head">Example</div><pre><code><span class="tok-pre">&gt;&gt;&gt;</span> <span class="tok-kw">from</span> conquer3d.creation <span class="tok-kw">import</span> create_tetrahedra
 <span class="tok-pre">&gt;&gt;&gt;</span> verts, faces = <span class="tok-fn">create_tetrahedra</span>(radius=<span class="tok-num">1.0</span>)</code></pre></div></section></main><aside class="toc"><div class="toc-head">On this page</div><a href="#conquer3d.creation.triangle_creation">conquer3d.creation.triangle_creation</a><a class="lvl-2" href="#conquer3d.creation.triangle_creation.create_sphere">create_sphere</a><a class="lvl-2" href="#conquer3d.creation.triangle_creation.create_tetrahedra">create_tetrahedra</a></aside></div>
 <footer class="footer"><div class="footer-inner">
-  <span>Conquer3D v0.7.3 — MIT licensed</span>
+  <span>Conquer3D v0.7.4 — MIT licensed</span>
   <span class="spacer"></span>
   <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
   <a href="https://pypi.org/project/conquer3d/">PyPI</a>

@@ -781,6 +781,149 @@ def fig_meshbvh(rnd):
                  OUT / "fig-meshbvh.png")
 
 
+RES_NORM = 256
+AZ_NORM = 215
+
+NEUTRAL_N = 0.62  # grey stand-in for a normal that could not be computed
+
+
+def normal_rgb(n):
+    """The standard normal-map encoding: a unit direction as an RGB colour.
+
+    Each axis maps to a channel, so a colour names an orientation directly and
+    two normal fields can be compared by eye rather than against a legend.
+    Vertices whose normal is not finite are left neutral grey rather than
+    silently rendering as black.
+    """
+    bad = ~torch.isfinite(n).all(dim=-1, keepdim=True)
+    safe = torch.where(bad, torch.zeros_like(n), n)
+    rgb = (torch.nn.functional.normalize(safe, dim=-1) * 0.5 + 0.5).clamp(0.0, 1.0)
+    return torch.where(bad, torch.full_like(rgb, NEUTRAL_N), rgb)
+
+
+def vertex_normals(mesh):
+    """Vertex normals, plus a mask of the ones that came back non-finite."""
+    mesh.compute_vertex_normals(0)
+    n = mesh.get_vertex_normals(0)
+    return n, ~torch.isfinite(n).all(dim=-1)
+
+
+def gt_normal_at(tmesh, gt_vn, points):
+    """Ground-truth surface normal at the closest surface point to each input.
+
+    The closest *face* normal is the obvious choice and the wrong one: it is
+    piecewise constant, so comparing a smoothed extracted normal against it
+    measures the reference mesh's own tessellation as much as the extraction.
+    On Beast that self-disagreement is a median 5.64 degrees -- larger than the
+    error being looked for. Interpolating the reference's vertex normals over
+    the triangle the point projects onto compares like with like.
+    """
+    q = tmesh.query_points(points.contiguous(), return_sdf=False,
+                           return_prj_pts=True, sign_mode=0)
+    tri = q[1].reshape(-1).long()
+    prj = q[2]
+    T = tmesh.triangles.long()[tri]
+    a, b, c = tmesh.vertices[T[:, 0]], tmesh.vertices[T[:, 1]], tmesh.vertices[T[:, 2]]
+
+    e0, e1, e2 = b - a, c - a, prj - a
+    d00 = (e0 * e0).sum(-1)
+    d01 = (e0 * e1).sum(-1)
+    d11 = (e1 * e1).sum(-1)
+    d20 = (e2 * e0).sum(-1)
+    d21 = (e2 * e1).sum(-1)
+    den = (d00 * d11 - d01 * d01).clamp(min=1e-20)
+    v = (d11 * d20 - d01 * d21) / den
+    w = (d00 * d21 - d01 * d20) / den
+    u = 1.0 - v - w
+    return (u[:, None] * gt_vn[T[:, 0]]
+            + v[:, None] * gt_vn[T[:, 1]]
+            + w[:, None] * gt_vn[T[:, 2]])
+
+
+def fig_normals(rnd):
+    """Ground-truth normals against every extractor's, with angular deviation."""
+    from conquer3d.data_structure import TriangleMesh
+    from conquer3d.ops import (dc, dmc, marching_cubes,
+                               marching_tetrahedra_grid, mca)
+
+    tmesh = load_mesh(_asset("XYZRGBDragon"))
+
+    # fix_normals rewrites the winding order in place, so the original has to be
+    # captured first to say how many triangles actually turned.
+    before = tmesh.triangles.clone()
+    tmesh.fix_normals()
+    flipped = int((tmesh.triangles != before).any(dim=1).sum())
+    print(f"    fix_normals reoriented {flipped:,} of {before.shape[0]:,} triangles")
+
+    gt_n, _ = vertex_normals(tmesh)
+    tmesh.compute_triangle_normals()
+
+    gv, vox, sdf, nrm = build_grid(tmesh, RES_NORM, normal_mode=0)
+    runs = {
+        "Marching Cubes": first_two(marching_cubes(gv, vox, sdf, iso=0.0)),
+        "MC Asymptotic": first_two(mca(gv, vox, sdf, iso=0.0)),
+        "Dual Contouring": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0)),
+        "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0)),
+        "Marching Tetrahedra": first_two(marching_tetrahedra_grid(gv, vox, sdf, iso=0.0)),
+    }
+
+    shot = dict(flat=False, azimuth=AZ_NORM, elevation=14, rim_strength=0.12)
+    accent = [(34, 211, 238), (118, 185, 0), (167, 139, 250),
+              (251, 191, 36), (251, 113, 133)]
+
+    normal_panels, dev_panels = [], []
+    n_labels, n_subs, d_labels, d_subs = [], [], [], []
+
+    for name, (ev, ef) in runs.items():
+        ex_n, ex_bad = vertex_normals(
+            TriangleMesh(ev.contiguous(), ef.int().contiguous()))
+
+        ref_n = gt_normal_at(tmesh, gt_n, ev)
+        cos = (torch.nn.functional.normalize(ex_n, dim=-1)
+               * torch.nn.functional.normalize(ref_n, dim=-1)).sum(-1).clamp(-1.0, 1.0)
+        ang = torch.rad2deg(torch.arccos(cos))
+        good = ang[~ex_bad]
+        med = float(good.median())
+        p99 = float(torch.quantile(good.float(), 0.99))
+        # A median past 90 degrees means the whole surface is wound inward, which
+        # is a convention flip rather than error. Surfaced rather than hidden, so
+        # the figure cannot quietly misreport a regression here.
+        inverted = med > 90.0
+        outward = float((cos > 0).float().mean())
+        print(f"    {name:<22} median {med:6.2f}deg  p99 {p99:6.2f}deg  "
+              f"outward {100 * outward:5.1f}%  {int(ex_bad.sum()):>5} non-finite"
+              f"{'  INVERTED' if inverted else ''}")
+
+        rgb = torch.from_numpy(
+            compose.colormap(torch.where(ex_bad, torch.zeros_like(ang), ang)
+                             .detach().cpu().numpy(), "viridis", robust=15.0)
+        ).float().to(DEV)
+        rgb[ex_bad] = NEUTRAL_N
+
+        normal_panels.append(render_mesh(rnd, ev, ef, colors=normal_rgb(ex_n), **shot))
+        dev_panels.append(render_mesh(rnd, ev, ef, colors=rgb, **shot))
+        n_labels.append(name)
+        n_subs.append(f"{ef.shape[0]:,} faces"
+                      + ("  \u00b7 winding inverted" if inverted else ""))
+        d_labels.append("Angular deviation")
+        d_subs.append(f"median {med:.1f}\u00b0 \u00b7 p99 {p99:.1f}\u00b0")
+
+    # Trim every panel against one shared box so the reference and all ten
+    # comparison panels keep the same scale.
+    gt_v, gt_f = gt_mesh(tmesh)
+    gt_panel = rnd.render(gt_v, gt_f, colors=normal_rgb(gt_n), **shot)
+    panels = compose.trim([gt_panel] + normal_panels + dev_panels)
+
+    left = compose.grid(panels[:1], ["Ground truth"],
+                        sublabels=[f"{before.shape[0]:,} faces \u00b7 "
+                                   f"{flipped:,} reoriented"],
+                        accents=[(150, 158, 176)])
+    right = compose.grid(panels[1:], n_labels + d_labels,
+                         sublabels=n_subs + d_subs, cols=len(runs),
+                         accents=accent + accent)
+    compose.save(compose.hstack([left, right]), OUT / "fig-normals.png")
+
+
 def _asset(name):
     import conquer3d.data.assets as assets
 
@@ -798,6 +941,7 @@ FIGURES = [
     ("pipeline", fig_pipeline, True),
     ("zcurve", fig_zcurve, True),
     ("meshbvh", fig_meshbvh, True),
+    ("normals", fig_normals, True),
 ]
 
 

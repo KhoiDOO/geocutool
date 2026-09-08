@@ -121,6 +121,22 @@ def stack(images: Sequence[Image.Image], pad: int = 10) -> Image.Image:
     return out
 
 
+def hstack(images: Sequence[Image.Image], pad: int = 18) -> Image.Image:
+    """Place composed blocks side by side, centred vertically.
+
+    The counterpart to :func:`stack`, for a figure where one panel stands apart
+    from a grid -- a reference the whole grid is read against.
+    """
+    H = max(im.height for im in images)
+    W = sum(im.width for im in images) + pad * (len(images) - 1)
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    x = 0
+    for im in images:
+        out.alpha_composite(im, (x, (H - im.height) // 2))
+        x += im.width + pad
+    return out
+
+
 def save(image: Image.Image, path: Path, max_width: int = 2000) -> None:
     """Write a figure, downscaling and stripping unused alpha bounds."""
     path.parent.mkdir(parents=True, exist_ok=True)
