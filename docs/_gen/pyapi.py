@@ -344,6 +344,53 @@ _C_CLASS_BLURB = {
 }
 
 
+def _classes_from_bindings(bindings: Dict[str, bindmap.Binding]) -> List[Symbol]:
+    """Reconstruct the T2 class symbols from the binding sources alone.
+
+    ``_C.pyi`` is produced by ``pybind11-stubgen`` after a build and is matched
+    by ``*.pyi`` in .gitignore, so it exists in a working tree and in no tagged
+    checkout. The bindings carry the same classes, their members, their pbdoc
+    blocks and their ``py::arg`` lists, so a stub-free tree loses the stub's
+    type annotations but nothing structural.
+    """
+    out: List[Symbol] = []
+    for name, binding in sorted(bindings.items()):
+        if not binding.is_class:
+            continue
+        klass = Symbol(
+            name=name,
+            kind="class",
+            tier="T2",
+            qualname=f"conquer3d._C.{name}",
+            signature="",
+            doc=docparse.parse(binding.docstring),
+            source_file=binding.source_file,
+            source_line=binding.source_line,
+            language="python",
+        )
+        prefix = f"{name}."
+        members = [b for key, b in bindings.items() if key.startswith(prefix)]
+        for member in sorted(members, key=lambda b: b.source_line):
+            params = ", ".join(
+                arg if not default else f"{arg}={default}" for arg, default in member.args
+            )
+            klass.children.append(
+                Symbol(
+                    name=member.name,
+                    kind="method",
+                    tier="T2",
+                    qualname=f"conquer3d._C.{name}.{member.name}",
+                    signature=f"({params})",
+                    doc=docparse.parse(member.docstring),
+                    source_file=member.source_file,
+                    source_line=member.source_line,
+                    language="python",
+                )
+            )
+        out.append(klass)
+    return out
+
+
 def collect_bindings(repo_root: Path) -> List[Group]:
     """Build the T2 page set.
 
@@ -354,16 +401,22 @@ def collect_bindings(repo_root: Path) -> List[Group]:
     under the category directory its binding lives in, and points at that
     translation unit rather than at the generated stub.
     """
-    stub = repo_root / "conquer3d" / "_C.pyi"
-    if not stub.exists():
-        print("  ! conquer3d/_C.pyi not found -- T2 will be empty")
-        return []
-
-    rel_path = str(stub.relative_to(repo_root))
-    module_doc, symbols = read_module(stub, "conquer3d._C", rel_path, "T2")
     bindings = bindmap.scan(repo_root)
     if not bindings:
-        print("  ! csrc/binds not readable -- T2 falls back to a flat namespace")
+        print("  ! csrc/binds not readable -- T2 will be empty")
+        return []
+
+    stub = repo_root / "conquer3d" / "_C.pyi"
+    if stub.exists():
+        rel_path = str(stub.relative_to(repo_root))
+        module_doc, symbols = read_module(stub, "conquer3d._C", rel_path, "T2")
+    else:
+        # Expected for any tagged checkout: the stub is generated and gitignored.
+        # The bindings are the authoritative source in either case -- the stub
+        # only ever contributed type annotations on top of them.
+        print("  . conquer3d/_C.pyi absent -- T2 built from csrc/binds alone")
+        rel_path = "conquer3d/csrc/binds"
+        module_doc, symbols = Doc(), _classes_from_bindings(bindings)
 
     class_groups: Dict[str, List[Group]] = {}
     # category -> binding file -> [Symbol]

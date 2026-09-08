@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-base="">
+<html lang="en" data-base="" data-search="search-index.json">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
-<link rel="stylesheet" href="assets/css/site.css?v=78c798bf8d">
+<link rel="stylesheet" href="assets/css/site.css?v=756e1b71e1">
 <script>
   // Applied before first paint so the theme never flashes.
   (function(){
@@ -24,7 +24,7 @@
 <body>
 <header class="nav">
   <a class="brand" href="index.html">
-    <span class="mark"></span> Conquer3D <span class="ver">v0.7.4</span>
+    <span class="mark"></span> Conquer3D <span class="ver">v0.7.5</span>
   </a>
   <nav class="nav-tabs"><a href="index.html" class="">Showcase</a><a href="documentation.html" class="">Documentation</a><a href="api/index.html" class="">API Reference</a><a href="benchmarks.html" class="active">Benchmarks</a><a href="about.html" class="">About</a></nav>
   <div class="nav-right">
@@ -66,7 +66,7 @@
     <th>Latency</th><th>Throughput</th></tr></thead>
     <tbody><tr><td><strong>DMC (pure quads)</strong></td><td class="num">1,716,384</td><td class="num">1,716,382</td><td class="num hl">2.51 ms</td><td class="num">684M faces/s</td></tr><tr><td><strong>Dual Marching Cubes</strong></td><td class="num">1,716,384</td><td class="num">3,432,764</td><td class="num hl">2.62 ms</td><td class="num">1,310M faces/s</td></tr><tr><td><strong>MC Asymptotic</strong></td><td class="num">1,716,382</td><td class="num">3,432,760</td><td class="num hl">2.71 ms</td><td class="num">1,267M faces/s</td></tr><tr><td><strong>Dual Contouring</strong></td><td class="num">1,716,384</td><td class="num">3,432,764</td><td class="num hl">3.88 ms</td><td class="num">885M faces/s</td></tr><tr><td><strong>Marching Cubes</strong></td><td class="num">1,716,382</td><td class="num">3,432,760</td><td class="num hl">7.88 ms</td><td class="num">436M faces/s</td></tr><tr><td><strong>Marching Tetrahedra</strong></td><td class="num">6,113,918</td><td class="num">12,227,832</td><td class="num hl">44.56 ms</td><td class="num">274M faces/s</td></tr></tbody>
   </table></div>
-  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-extraction.webp" alt="Extraction latency and throughput against grid resolution" loading="lazy"></div></figure>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-extraction.webp?v=eab6100eef" alt="Extraction latency and throughput against grid resolution" loading="lazy"></div></figure>
   <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">Reading these numbers</div>
   <p>Throughput rises with resolution because the fixed launch and scan overhead is
   amortised over more cells — the operators are latency-bound at 128³ and
@@ -85,7 +85,7 @@
     <thead><tr><th>Mode</th><th>Method</th><th>23M points</th><th>Rate</th><th>Relative</th></tr></thead>
     <tbody><tr><td><span class="badge">sign_mode=5</span></td><td><strong>Coarse-fine fill</strong></td><td class="num">1,776 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=3</span></td><td><strong>Flood fill</strong></td><td class="num">1,777 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=2</span></td><td><strong>Winding number</strong></td><td class="num">1,778 ms</td><td class="num">12.9M pts/s</td><td class="num">1.00×</td></tr><tr><td><span class="badge">sign_mode=1</span></td><td><strong>Pseudonormal</strong></td><td class="num">1,863 ms</td><td class="num">12.3M pts/s</td><td class="num">1.05×</td></tr><tr><td><span class="badge">sign_mode=4</span></td><td><strong>Hybrid consensus</strong></td><td class="num">1,879 ms</td><td class="num">12.2M pts/s</td><td class="num">1.06×</td></tr><tr><td><span class="badge">sign_mode=0</span></td><td><strong>Ray parity</strong></td><td class="num">1,948 ms</td><td class="num">11.8M pts/s</td><td class="num">1.10×</td></tr></tbody>
   </table></div>
-  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-signmodes.webp" alt="Sign mode query time and throughput against query-set size" loading="lazy"></div></figure>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-signmodes.webp?v=4b7f0fceb2" alt="Sign mode query time and throughput against query-set size" loading="lazy"></div></figure>
   <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">The choice is nearly free, and it stays that way</div>
   <p>Swept across 10 query-set sizes from 1M to 23M points —
   mostly prime multiples, so no size is a multiple of another and any cache resonance would
@@ -107,7 +107,7 @@
     <thead><tr><th>Points per cloud</th><th>One-sided Chamfer</th><th>Chamfer</th><th>One-sided Hausdorff</th><th>Hausdorff</th></tr></thead>
     <tbody><tr><td><strong>0.1M</strong></td><td class="num">2.01 ms</td><td class="num">3.59 ms</td><td class="num">1.82 ms</td><td class="num">3.60 ms</td></tr><tr><td><strong>0.25M</strong></td><td class="num">3.39 ms</td><td class="num">6.65 ms</td><td class="num">3.33 ms</td><td class="num">6.66 ms</td></tr><tr><td><strong>0.5M</strong></td><td class="num">6.02 ms</td><td class="num">12.06 ms</td><td class="num">6.01 ms</td><td class="num">12.04 ms</td></tr><tr><td><strong>1M</strong></td><td class="num">11.64 ms</td><td class="num">23.21 ms</td><td class="num">11.63 ms</td><td class="num">23.23 ms</td></tr><tr><td><strong>2M</strong></td><td class="num">33.94 ms</td><td class="num">68.01 ms</td><td class="num">34.05 ms</td><td class="num">68.12 ms</td></tr><tr><td><strong>4M</strong></td><td class="num">92.80 ms</td><td class="num">186.13 ms</td><td class="num">92.82 ms</td><td class="num">186.09 ms</td></tr></tbody>
   </table></div>
-  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-distance.webp" alt="Chamfer and Hausdorff distance timing against point-cloud size" loading="lazy"></div></figure>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-distance.webp?v=ff0b8ced39" alt="Chamfer and Hausdorff distance timing against point-cloud size" loading="lazy"></div></figure>
   <div class="adm adm-note" style="margin-top:20px"><div class="adm-title">Reading these numbers</div>
   <p>The symmetric metrics cost almost exactly twice their one-sided counterparts, which
   is what you would expect: each runs the same nearest-neighbour query once per direction.
@@ -127,7 +127,7 @@
     <th>Grid build</th><th>Flood fill</th><th>SDF query</th></tr></thead>
     <tbody><tr><td><strong>128³</strong></td><td class="num">79,472</td><td class="num">3.79%</td><td class="num">4.2 ms</td><td class="num">3.6 ms</td><td class="num">0.3 ms</td></tr><tr><td><strong>256³</strong></td><td class="num">319,357</td><td class="num">1.90%</td><td class="num">5.2 ms</td><td class="num">9.1 ms</td><td class="num">0.3 ms</td></tr><tr><td><strong>512³</strong></td><td class="num">1,280,303</td><td class="num">0.95%</td><td class="num">15.0 ms</td><td class="num">34.4 ms</td><td class="num">0.6 ms</td></tr><tr><td><strong>1024³</strong></td><td class="num">5,148,906</td><td class="num">0.48%</td><td class="num">66.6 ms</td><td class="num">799.7 ms</td><td class="num">1.8 ms</td></tr></tbody>
   </table></div>
-  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-pipeline.webp" alt="Setup cost broken down by stage against grid resolution" loading="lazy"></div></figure>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-bench-pipeline.webp?v=c4eafa39ef" alt="Setup cost broken down by stage against grid resolution" loading="lazy"></div></figure>
   <div class="adm adm-warn" style="margin-top:20px"><div class="adm-title">Setup dominates</div>
   <p>Extraction is the cheap part. At 1024³ the operators run in single-digit
   milliseconds while building the flood-fill structure takes close to a second — so if
@@ -142,11 +142,11 @@
     <h2>Why the grid stays sparse</h2>
     <p>Measured grid storage against resolution, dense versus narrow-band.</p>
   </div>
-  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-memory.webp" alt="Grid storage against resolution, dense versus narrow-band" loading="lazy"></div></figure>
+  <figure class="fig" style="margin-top:22px"><div class="fig-media"><img src="assets/img/fig-memory.webp?v=aa50b229ef" alt="Grid storage against resolution, dense versus narrow-band" loading="lazy"></div></figure>
 </section>
 </main>
 <footer class="footer"><div class="footer-inner">
-  <span>Conquer3D v0.7.4 — MIT licensed</span>
+  <span>Conquer3D v0.7.5 — MIT licensed</span>
   <span class="spacer"></span>
   <a href="https://github.com/KhoiDOO/conquer3d">GitHub</a>
   <a href="https://pypi.org/project/conquer3d/">PyPI</a>
@@ -170,6 +170,6 @@
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
   onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});"></script>
-<script src="assets/js/site.js?v=3b88bc2f79"></script>
+<script src="assets/js/site.js?v=24cd617a09"></script>
 </body>
 </html>

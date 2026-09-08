@@ -60,6 +60,27 @@ def trim(panels: Sequence[np.ndarray], margin: int = 12) -> List[np.ndarray]:
     return [p[y0:y1, x0:x1] for p in panels]
 
 
+def pad_to(panels, width: int):
+    """Centre each panel in a transparent frame of the given width.
+
+    Two grids stacked into one figure only read as columns if their cells are
+    the same width; a wide shot and a close crop trim to different aspects, so
+    the narrower row is padded rather than rescaled, which would break the
+    shared scale that makes the panels comparable.
+    """
+    out = []
+    for panel in panels:
+        h, w = panel.shape[0], panel.shape[1]
+        if w >= width:
+            out.append(panel)
+            continue
+        frame = np.zeros((h, width, panel.shape[2]), dtype=panel.dtype)
+        x = (width - w) // 2
+        frame[:, x:x + w] = panel
+        out.append(frame)
+    return out
+
+
 def grid(
     panels: Sequence[np.ndarray],
     labels: Sequence[str],

@@ -8,6 +8,9 @@
 
   var root = document.documentElement;
   var BASE = root.getAttribute("data-base") || "";
+  // A versioned API page searches its own version, so the index it should
+  // query is declared per page rather than assumed to sit at the site root.
+  var SEARCH = root.getAttribute("data-search") || (BASE + "search-index.json");
 
   /* ------------------------------------------------------------ theme --- */
   // Applied inline in <head> before paint to avoid a flash; this only wires
@@ -21,6 +24,32 @@
     });
   }
 
+  /* --------------------------------------------------------- versions --- */
+  // A released version's pages are written once and never rebuilt, so a page
+  // from an older build cannot know about releases that came after it. The
+  // options rendered at build time are the fallback; this refreshes them from
+  // the manifest, which is rewritten on every build.
+  var picker = document.querySelector(".ver-select");
+  if (picker) {
+    var here = picker.value;
+    var page = here.split("/").pop();
+    fetch(BASE + "api/versions.json")
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        if (!Array.isArray(list) || !list.length) return;
+        picker.innerHTML = "";
+        list.forEach(function (v) {
+          var target = (v.page && v.page[page]) || (v.path + "/index.html");
+          var opt = document.createElement("option");
+          opt.value = target;
+          opt.textContent = "v" + v.version + (v.current ? " \u00b7 current" : "");
+          if (target === here) opt.selected = true;
+          picker.appendChild(opt);
+        });
+      })
+      .catch(function () { /* keep the build-time options */ });
+  }
+
   /* ----------------------------------------------------------- search --- */
   var modal = document.getElementById("search-modal");
   var input = document.getElementById("search-input");
@@ -31,7 +60,7 @@
   function loadIndex() {
     if (index || loading) return;
     loading = true;
-    fetch(BASE + "search-index.json")
+    fetch(SEARCH)
       .then(function (r) { return r.json(); })
       .then(function (data) { index = data; loading = false; if (input && input.value) run(input.value); })
       .catch(function () { loading = false; });

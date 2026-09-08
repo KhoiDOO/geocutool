@@ -72,8 +72,19 @@ EXCLUDE_SYMBOLS        = *_H *_CUH *_HPP TEST_AXIS
 # --------------------------------------------------------------------------- #
 
 
-def run_doxygen(repo_root: Path, docs_dir: Path) -> Optional[Path]:
-    """Run Doxygen over ``csrc/`` and return the XML output directory."""
+def run_doxygen(repo_root: Path, docs_dir: Path,
+                scratch: Optional[Path] = None) -> Optional[Path]:
+    """Run Doxygen over ``csrc/`` and return the XML output directory.
+
+    Args:
+        repo_root: Source tree to document -- the working tree, or a checkout
+            of a tag.
+        docs_dir: Site directory, used only to site the default scratch dir.
+        scratch: Where to put the Doxyfile and XML. Each source tree needs its
+            own: Doxygen does not remove XML for files that have disappeared,
+            and the caller globs the directory, so a shared scratch folds one
+            tree's deleted symbols into the next tree's page set.
+    """
     doxygen = shutil.which("doxygen")
     if not doxygen:
         # Conda installs it outside the active environment's bin, so an activated
@@ -92,7 +103,10 @@ def run_doxygen(repo_root: Path, docs_dir: Path) -> Optional[Path]:
             "to build tiers T3-T7"
         )
 
-    build_dir = docs_dir / "_build" / "doxygen"
+    build_dir = scratch if scratch is not None else docs_dir / "_build" / "doxygen"
+    # Cleared rather than merged, for the reason given above.
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     config = DOXYFILE.format(
@@ -312,7 +326,7 @@ def _page_key(tier: str, location: str) -> tuple:
 
 def _rel(location: str, repo_root: Path) -> str:
     try:
-        return str(Path(location).resolve().relative_to(repo_root))
+        return str(Path(location).resolve().relative_to(repo_root.resolve()))
     except Exception:
         idx = location.find("conquer3d/csrc")
         return location[idx:] if idx >= 0 else location
@@ -374,9 +388,10 @@ def _member_symbol(
     )
 
 
-def collect_native(repo_root: Path, docs_dir: Path) -> List[Group]:
+def collect_native(repo_root: Path, docs_dir: Path,
+                   scratch: Optional[Path] = None) -> List[Group]:
     """Parse Doxygen XML into T3-T7 page groups."""
-    xml_dir = run_doxygen(repo_root, docs_dir)
+    xml_dir = run_doxygen(repo_root, docs_dir, scratch)
 
     pages: Dict[tuple, Group] = {}
 

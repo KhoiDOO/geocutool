@@ -252,12 +252,21 @@ def shell(
     toc: str = "",
     hero: str = "",
     wide: bool = False,
+    search: Optional[str] = None,
 ) -> str:
-    """Wrap page content in the site chrome."""
+    """Wrap page content in the site chrome.
+
+    Args:
+        base: Relative prefix from this page back to the site root. Computed
+            from the page's own depth, never written by hand.
+        search: Page-relative URL of the search index this page should query.
+            A versioned API page searches its own version, not the newest.
+    """
     tabs = "".join(
         f'<a href="{base}{href}" class="{"active" if href == active else ""}">{esc(label)}</a>'
         for href, label in TABS
     )
+    search = search if search is not None else f"{base}search-index.json"
 
     if sidebar or toc:
         main = (
@@ -273,7 +282,7 @@ def shell(
         main = f'<main class="wrap">{body}</main>'
 
     return f"""<!doctype html>
-<html lang="en" data-base="{base}">
+<html lang="en" data-base="{base}" data-search="{search}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -444,7 +453,8 @@ def _admonitions(doc: Doc) -> str:
     return "".join(out)
 
 
-def render_symbol(symbol: Symbol, *, base: str, depth: int = 0) -> str:
+def render_symbol(symbol: Symbol, *, base: str, depth: int = 0,
+                  source_ref: str = "main") -> str:
     """Render one symbol card, recursing into class members."""
     doc = symbol.doc
     kind_label = _KIND_LABEL.get(symbol.kind, symbol.kind)
@@ -461,7 +471,7 @@ def render_symbol(symbol: Symbol, *, base: str, depth: int = 0) -> str:
     if symbol.source_file:
         line = f"#L{symbol.source_line}" if symbol.source_line else ""
         source = (
-            f'<a class="sym-src" href="{REPO}/blob/main/{symbol.source_file}{line}">'
+            f'<a class="sym-src" href="{REPO}/blob/{source_ref}/{symbol.source_file}{line}">'
             f"{esc(symbol.source_file)}{esc(':' + str(symbol.source_line) if symbol.source_line else '')}</a>"
         )
 
@@ -500,7 +510,10 @@ def render_symbol(symbol: Symbol, *, base: str, depth: int = 0) -> str:
             "<p>This symbol has no docstring yet. Its signature is shown above.</p></div>"
         )
 
-    children = "".join(render_symbol(c, base=base, depth=depth + 1) for c in symbol.children)
+    children = "".join(
+        render_symbol(c, base=base, depth=depth + 1, source_ref=source_ref)
+        for c in symbol.children
+    )
 
     return (
         f'<section class="sym" id="{symbol.anchor}">'
@@ -519,7 +532,8 @@ def render_symbol(symbol: Symbol, *, base: str, depth: int = 0) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def build_sidebar(groups: List[Group], base: str, current: str) -> str:
+def build_sidebar(groups: List[Group], base: str, current: str,
+                  href_for=None, switcher: str = "") -> str:
     """Sidebar grouping every API page under its tier."""
     by_tier: Dict[str, List[Group]] = {}
     for group in groups:
@@ -534,7 +548,12 @@ def build_sidebar(groups: List[Group], base: str, current: str) -> str:
         for group in by_tier[tier]:
             documented, total = group.counts
             active = " active" if group.slug == current else ""
-            href = f"{base}api/{TIERS[group.tier]['slug']}-{group.slug}.html"
+            # The path formula lives in one place -- the caller's layout --
+            # so moving the API tree under a version directory needs no edit
+            # here. The fallback keeps the flat layout working standalone.
+            rel = (href_for(group) if href_for
+                   else f"api/{TIERS[group.tier]['slug']}-{group.slug}.html")
+            href = f"{base}{rel}"
             links.append(
                 f'<a class="side-link{active}" href="{href}">{esc(group.title)}'
                 f'<span class="count">{total}</span></a>'
@@ -544,7 +563,40 @@ def build_sidebar(groups: List[Group], base: str, current: str) -> str:
             f'<div class="side-head"><span class="tier-dot" style="background:var(--a-{_tier_colour(tier)})"></span>'
             f"{esc(tier)} · {esc(meta['name'])}</div>{''.join(links)}</div>"
         )
-    return "".join(blocks)
+    return switcher + "".join(blocks)
+
+
+def build_switcher(entries: List[dict], current_path: str, page: str,
+                   base: str) -> str:
+    """Version picker for the API sidebar.
+
+    Rendered as a plain form control resolved at build time, so it works with
+    no JavaScript. Each option points at the same page in the target version
+    when that page exists there, and at that version's index when it does not
+    -- a page can be added or removed between releases.
+
+    Args:
+        entries: The generated manifest, newest first.
+        current_path: Site-root-relative directory of the version being shown.
+        page: File name of the page being rendered, e.g. ``python-ops.html``.
+        base: Relative prefix back to the site root, since option values are
+            site-root-relative.
+    """
+    if len(entries) < 2:
+        return ""
+    options = []
+    for entry in entries:
+        target = entry["page"].get(page) or f"{entry['path']}/index.html"
+        selected = " selected" if entry["path"] == current_path else ""
+        label = f"v{entry['version']}" + (" · current" if entry.get("current") else "")
+        options.append(f'<option value="{esc(target)}"{selected}>{esc(label)}</option>')
+    return (
+        '<div class="side-group side-versions">'
+        '<div class="side-head">Version</div>'
+        f'<select class="ver-select" data-base="{esc(base)}"'
+        ' onchange="location.href=this.dataset.base+this.value">'
+        f'{"".join(options)}</select></div>'
+    )
 
 
 _TIER_COLOURS = {

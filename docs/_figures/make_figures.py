@@ -16,6 +16,7 @@ missing asset or an unavailable sign mode cannot take the whole run down.
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 import traceback
@@ -170,17 +171,24 @@ AZ_ALGO = 218
 
 
 def fig_algorithms(rnd):
-    from conquer3d.ops import (dc, dmc, marching_cubes,
+    from conquer3d.ops import (compute_hermite_from_mesh, dc, dmc, marching_cubes,
                                marching_tetrahedra_grid, mca)
 
     tmesh = load_mesh(_asset("Fandisk"))
+    tmesh.compute_triangle_normals()
     gv, vox, sdf, nrm = build_grid(tmesh, RES_ALGO, normal_mode=0)
+
+    # The dual methods are shown at their best: exact Hermite data rather than
+    # normals interpolated across the crease from the grid corners.
+    ep, en = compute_hermite_from_mesh(tmesh, gv, vox, sdf)
 
     runs = {
         "Marching Cubes": first_two(marching_cubes(gv, vox, sdf, iso=0.0)),
         "MC Asymptotic": first_two(mca(gv, vox, sdf, iso=0.0)),
-        "Dual Contouring": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0)),
-        "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0)),
+        "Dual Contouring": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0,
+                                        edge_points=ep, edge_normals=en)),
+        "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0,
+                                             edge_points=ep, edge_normals=en)),
         "Marching Tetrahedra": first_two(marching_tetrahedra_grid(gv, vox, sdf, iso=0.0)),
     }
 
@@ -189,8 +197,11 @@ def fig_algorithms(rnd):
                (251, 191, 36), (251, 113, 133)]
 
     # Zoom where Marching Cubes and Dual Contouring disagree most: the crease.
+    # Located from the plain Dual Contouring run, not the Hermite one, so that
+    # supplying Hermite data changes the surfaces on show without also moving
+    # the camera to a different part of the model.
     mc_v = R.normalize_mesh(runs["Marching Cubes"][0])
-    dc_v = R.normalize_mesh(runs["Dual Contouring"][0])
+    dc_v = R.normalize_mesh(first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0))[0])
     target = divergence_point(mc_v, dc_v).tolist()
 
     # Ground truth leads, so every extraction is read against the original.
@@ -776,8 +787,67 @@ def fig_meshbvh(rnd):
     labels.append("Ray vs voxels")
     subs.append(f"{vox.shape[0]:,} cells · {hit_vox.numel()} crossed")
 
+    # --- panel 3: five rays, five origins -----------------------------------
+    # One hierarchy, many independent queries. Each ray gets its own colour and
+    # paints the triangles it hits in that colour, so which ray produced which
+    # hit is readable without a legend.
+    n_fan = 5
+    a_r, e_r = math.radians(28.0), math.radians(46.0)
+    eye = torch.tensor([math.cos(e_r) * math.sin(a_r), math.sin(e_r),
+                        math.cos(e_r) * math.cos(a_r)], device=DEV)
+    fwd = -eye
+    right = torch.nn.functional.normalize(
+        torch.cross(fwd, torch.tensor([0.0, 1.0, 0.0], device=DEV), dim=0), dim=0)
+    up = torch.cross(right, fwd, dim=0)
+
+    # Aim at five spots spread over the camera-facing cap, each approached from
+    # its own direction, so the origins are genuinely apart rather than a fan.
+    th = torch.linspace(0.0, 2.0 * math.pi, n_fan + 1, device=DEV)[:n_fan]
+    tgt = (0.62 * (torch.cos(th)[:, None] * right[None, :]
+                   + torch.sin(th)[:, None] * up[None, :])
+           - 0.78 * fwd[None, :])
+    phi = th + 0.9
+    fan_d = torch.nn.functional.normalize(
+        fwd[None, :] + 0.42 * (torch.cos(phi)[:, None] * right[None, :]
+                               + torch.sin(phi)[:, None] * up[None, :]), dim=-1)
+    fan_o = (tgt - 2.5 * fan_d).contiguous()
+    fan_d = fan_d.contiguous()
+
+    RAY_COLS = torch.tensor([[0.13, 0.83, 0.93], [0.46, 0.73, 0.00],
+                             [0.65, 0.55, 0.98], [0.98, 0.75, 0.14],
+                             [0.98, 0.44, 0.52]], device=DEV)
+
+    fq, ftri, _, fdist = mesh_bvh.get_ray_intersection(fan_o, fan_d, verts, tris, True)
+    fq = fq.reshape(-1).long()
+    ftri = ftri.reshape(-1).long()
+    print(f"    5 rays from 5 origins: {ftri.numel()} hits on "
+          f"{ftri.unique().numel()} distinct triangles")
+
+    fan_cols = NEUTRAL[None, :].expand(tris.shape[0], 3).clone()
+    fan_cols[ftri] = RAY_COLS[fq % n_fan]
+    ec3 = fan_cols[:, None, :].expand(-1, 3, -1).reshape(-1, 3)
+
+    # Each ray stops at its own first hit; drawing full-length rods instead
+    # builds a wall of geometry in front of the sphere.
+    stop = torch.full((n_fan,), 3.4, device=DEV)
+    if fq.numel():
+        stop.scatter_reduce_(0, fq, fdist.reshape(-1), reduce="amin",
+                             include_self=True)
+    steps = 80
+    frac = torch.linspace(0.0, 1.0, steps, device=DEV)[None, :, None]
+    rod_pts = (fan_o[:, None, :]
+               + frac * stop[:, None, None] * fan_d[:, None, :]).reshape(-1, 3)
+    rod_cols = RAY_COLS[:, None, :].expand(n_fan, steps, 3).reshape(-1, 3)
+    fv, ff, fc = R.cube_mesh(rod_pts, 0.026, colors=rod_cols)
+    v3, f3, c3 = compose_scene(fit(ev), ef, ec3, [(fit(fv), ff, fc)])
+    panels.append(rnd.render(v3, f3, colors=c3, flat=True, azimuth=28,
+                             elevation=46, fit_radius=1.45, rim_strength=0.2))
+    labels.append("5 rays, 5 origins")
+    subs.append(f"{ftri.unique().numel()} triangles hit")
+
     compose.save(compose.grid(compose.trim(panels), labels, sublabels=subs,
-                              accents=[(118, 185, 0), (251, 191, 36)]),
+                              accents=[(118, 185, 0), (251, 191, 36),
+                                       (34, 211, 238)]),
                  OUT / "fig-meshbvh.png")
 
 
@@ -924,6 +994,86 @@ def fig_normals(rnd):
     compose.save(compose.hstack([left, right]), OUT / "fig-normals.png")
 
 
+RES_HERM = 64
+AZ_HERM = 218
+
+
+def fig_hermite(rnd):
+    """Dual methods with interpolated normals against exact Hermite data."""
+    from conquer3d.ops import compute_hermite_from_mesh, dc, dmc
+
+    tmesh = load_mesh(_asset("Fandisk"))
+    tmesh.fix_normals()
+    tmesh.compute_triangle_normals()
+    gv, vox, sdf, nrm = build_grid(tmesh, RES_HERM, normal_mode=0)
+
+    ep, en = compute_hermite_from_mesh(tmesh, gv, vox, sdf)
+    crossings = int((en.norm(dim=-1) > 0).sum())
+    print(f"    hermite data on {crossings:,} sign-crossing edges "
+          f"of {en.shape[0] * 12:,}")
+
+    runs = {
+        "Dual Contouring": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0)),
+        "DC + Hermite": first_two(dc(gv, vox, sdf, grid_normals=nrm, iso=0.0,
+                                     edge_points=ep, edge_normals=en)),
+        "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0)),
+        "DMC + Hermite": first_two(dmc(gv, vox, sdf, iso=0.0,
+                                       edge_points=ep, edge_normals=en)),
+    }
+
+    ref = tmesh.sample_points(SURFACE_SAMPLES)[0].contiguous()
+    gt_vn, _ = vertex_normals(tmesh)
+
+    # Crop where supplying Hermite data changes Dual Contouring most, so the
+    # close row lands on a crease rather than on a hand-picked spot.
+    target = divergence_point(R.normalize_mesh(runs["Dual Contouring"][0]),
+                              R.normalize_mesh(runs["DC + Hermite"][0])).tolist()
+
+    tints = [R.CYAN, R.GREEN, R.AMBER, R.VIOLET]
+    accents = [(34, 211, 238), (118, 185, 0), (251, 191, 36), (167, 139, 250)]
+
+    gt_v, gt_f = gt_mesh(tmesh)
+    wide = [rnd.render(gt_v, gt_f, base=GT_TINT, flat=True,
+                       azimuth=AZ_HERM, elevation=20)]
+    close = [rnd.render(gt_v, gt_f, base=GT_TINT, flat=True, azimuth=AZ_HERM,
+                        elevation=20, target=target, fit_radius=0.11,
+                        wireframe=0.004)]
+    labels = ["Ground truth"]
+    subs = [f"{gt_f.shape[0]:,} faces"]
+
+    for (name, (v, f)), tint in zip(runs.items(), tints):
+        nv = R.normalize_mesh(v)
+        wide.append(rnd.render(nv, f, base=tint, flat=True,
+                               azimuth=AZ_HERM, elevation=20))
+        close.append(rnd.render(nv, f, base=tint, flat=True, azimuth=AZ_HERM,
+                                elevation=20, target=target, fit_radius=0.11,
+                                wireframe=0.004))
+        cd, hd = surface_metrics(v, f, ref)
+        exn, bad = vertex_normals(
+            __import__("conquer3d").data_structure.TriangleMesh(
+                v.contiguous(), f.int().contiguous()))
+        cos = (torch.nn.functional.normalize(exn, dim=-1)
+               * torch.nn.functional.normalize(
+                   gt_normal_at(tmesh, gt_vn, v), dim=-1)).sum(-1).clamp(-1.0, 1.0)
+        med = float(torch.rad2deg(torch.arccos(cos))[~bad].median())
+        labels.append(name)
+        subs.append(f"normals {med:.2f}\u00b0 \u00b7 Hausdorff {hd:.2e}")
+        print(f"    {name:<22} chamfer {cd:.3e}  hausdorff {hd:.3e}  "
+              f"normal median {med:.2f}deg")
+
+    wide = compose.trim(wide)
+    close = compose.trim(close)
+    cell = max(wide[0].shape[1], close[0].shape[1])
+    wide = compose.pad_to(wide, cell)
+    close = compose.pad_to(close, cell)
+    acc = [(150, 158, 176)] + accents
+    top = compose.grid(wide, labels, sublabels=subs, accents=acc)
+    bot = compose.grid(close, ["Crease detail"] * len(close),
+                       sublabels=["reference edge"] + [f"{RES_HERM}\u00b3 grid"] * 4,
+                       accents=acc)
+    compose.save(compose.stack([top, bot], pad=16), OUT / "fig-hermite.png")
+
+
 def _asset(name):
     import conquer3d.data.assets as assets
 
@@ -942,6 +1092,7 @@ FIGURES = [
     ("zcurve", fig_zcurve, True),
     ("meshbvh", fig_meshbvh, True),
     ("normals", fig_normals, True),
+    ("hermite", fig_hermite, True),
 ]
 
 

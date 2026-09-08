@@ -207,6 +207,17 @@ code, pre, .mono { font-family: var(--mono); font-variant-ligatures: none; }
 
 /* -------------------------------------------------------------------- toc */
 
+.side-versions { margin-bottom: 20px; }
+.ver-select {
+  width: 100%; margin-top: 4px; padding: 7px 9px;
+  font: 500 .84rem/1.3 var(--mono);
+  color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 7px;
+  cursor: pointer; appearance: none;
+}
+.ver-select:hover { border-color: var(--line-strong); }
+.ver-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .toc-head { font: 650 11.5px/1 var(--sans); letter-spacing: .085em; text-transform: uppercase; color: var(--fg-dim); margin-bottom: 11px; }
 .toc a {
   display: block; padding: 5px 0 5px 12px; font-size: .84rem; color: var(--fg-mid);

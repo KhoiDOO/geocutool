@@ -16,6 +16,16 @@ from typing import Dict, List
 import render
 from render import code_block, esc, md_inline
 
+
+def img_src(name: str) -> str:
+    """Figure URL carrying a content hash.
+
+    Figures are regenerated in place at a fixed path, so without this a browser
+    keeps showing the copy it already has and an updated figure never reaches
+    the reader.
+    """
+    return f"assets/img/{name}.webp?v={render._fingerprint(f'img/{name}.webp')}"
+
 # --------------------------------------------------------------------------- #
 # Bibliography parsing
 # --------------------------------------------------------------------------- #
@@ -172,10 +182,23 @@ FIGURES = [
     (
         "fig-algorithms", "Isosurface Extraction", "Comparison",
         "One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed "
-        "by five extractors. The source mesh is on the left. The lower row is a close "
-        "crop of the same five surfaces at the crease, placed at the point of largest "
-        "disagreement between Marching Cubes and Dual Contouring.",
-        ["Fandisk", "ground truth first", "64³ narrow band", "19,329 cells"], True,
+        "by five extractors, with the source mesh on the left. Dual Contouring and "
+        "Dual Marching Cubes are run on exact Hermite data from "
+        "`compute_hermite_from_mesh`. The lower row is a close crop of the same five "
+        "surfaces, placed at the point of largest disagreement between Marching Cubes "
+        "and Dual Contouring.",
+        ["Fandisk", "ground truth first", "64³ narrow band", "Hermite DC + DMC"], True,
+    ),
+    (
+        "fig-hermite", "Sharp features from Hermite data", "Sharpness",
+        "Fandisk at 64³, with Dual Contouring and Dual Marching Cubes run twice each: "
+        "once with normals interpolated from the grid, once with exact Hermite data "
+        "from `compute_hermite_from_mesh`, which ray-casts every one of the 25,832 "
+        "sign-crossing edges against the mesh to get the true intersection point and "
+        "the face normal there. The lower row is a close crop at the crease where the "
+        "two Dual Contouring results differ most. Each label carries the median normal "
+        "deviation from the ground truth and the Hausdorff distance.",
+        ["Fandisk", "compute_hermite_from_mesh", "64³ grid", "25,832 edges"], True,
     ),
     (
         "fig-resolution", "Detail is a resolution dial", "Scaling",
@@ -194,11 +217,14 @@ FIGURES = [
         ["Bimba", "sign_mode 0–5", "320² slice"], True,
     ),
     (
-        "fig-meshbvh", "One ray, two hierarchies", "Queries",
-        "A sphere from `create_sphere` and one ray. On the left, the two triangles of "
-        "780 that `MeshBVH.get_ray_intersection` reports the ray piercing. On the "
-        "right, the 15 cells of 3,766 that `BVH.query_ray` reports it crossing.",
-        ["create_sphere", "780 triangles", "3,766 cells", "Möller–Trumbore"], True,
+        "fig-meshbvh", "One ray, then five", "Queries",
+        "A sphere from `create_sphere`, queried with rays. One ray first: the two "
+        "triangles of 780 that `MeshBVH.get_ray_intersection` reports it piercing, "
+        "and the 15 cells of 3,766 that `BVH.query_ray` reports it crossing. Then "
+        "five rays from five different origins against the same hierarchy, each "
+        "drawn in its own colour as far as its own first hit, with the 10 triangles "
+        "they reach painted to match.",
+        ["create_sphere", "780 triangles", "3,766 cells", "Möller–Trumbore"], False,
     ),
     (
         "fig-normals", "Orientation, extractor by extractor", "Orientation",
@@ -213,7 +239,7 @@ FIGURES = [
         "fig-zcurve", "Sorting for cache locality", "Locality",
         "45,000 surface samples coloured by their index in the array, before and "
         "after `z_curve_sort` reorders them by 64-bit Morton code.",
-        ["Armadillo", "45,000 points", "64-bit Morton codes"], True,
+        ["Armadillo", "45,000 points", "64-bit Morton codes"], False,
     ),
     (
         "fig-curvature", "Curvature via Laplace–Beltrami operator", "Analysis",
@@ -245,7 +271,7 @@ FIGURES = [
 # volume is hiding behind a picture of a mesh.
 SPARSE_EXTRACTION = {
     "fig-algorithms", "fig-normal-modes", "fig-resolution", "fig-pipeline",
-    "fig-normals",
+    "fig-normals", "fig-hermite",
 }
 
 # Uses the same sparse grid, but for traversal rather than extraction.
@@ -279,7 +305,7 @@ def _figure_card(entry) -> str:
     return (
         f'<figure class="fig">'
         f'<div class="fig-media">'
-        f'<img src="assets/img/{name}.webp" alt="{esc(title)}" loading="lazy" decoding="async">'
+        f'<img src="{img_src(name)}" alt="{esc(title)}" loading="lazy" decoding="async">'
         f"</div>"
         f'<figcaption class="fig-body">'
         f'<span class="fig-kicker">{esc(kicker)}</span>'
@@ -367,7 +393,7 @@ def _load_benchmarks() -> dict:
 
 def _fig(name: str, alt: str) -> str:
     return (f'<figure class="fig" style="margin-top:22px"><div class="fig-media">'
-            f'<img src="assets/img/{name}.webp" alt="{esc(alt)}" loading="lazy">'
+            f'<img src="{img_src(name)}" alt="{esc(alt)}" loading="lazy">'
             f"</div></figure>")
 
 
