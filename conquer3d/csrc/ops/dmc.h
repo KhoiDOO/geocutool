@@ -29,7 +29,9 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_marching_cube
     const c10::optional<at::Tensor> &voxel_vertices = c10::nullopt,
     float iso = 0.0f,
     bool quad_split = true,
-    int project_iters = 5
+    int project_iters = 5,
+    const c10::optional<at::Tensor> &edge_points = c10::nullopt,
+    const c10::optional<at::Tensor> &edge_normals = c10::nullopt
 );
 
 /**

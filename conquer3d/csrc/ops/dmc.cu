@@ -368,6 +368,8 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
     const float *__restrict__ sdf,
     const float *__restrict__ colors,
     const float3 *__restrict__ precomputed_vertices,
+    const float3 *__restrict__ edge_points,
+    const float3 *__restrict__ edge_normals,
     int num_channels,
     const int *__restrict__ vert_offsets,
     const int *__restrict__ edge_offsets,
@@ -436,8 +438,22 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
         int dual_vert_idx = v_base + c;
         float u_sum = 0.0f, v_sum = 0.0f, w_sum = 0.0f;
 
+        const bool use_hermite = (edge_points != nullptr && edge_normals != nullptr);
+        float3 h_pts[12];
+        float3 h_nrm[12];
+        int h_count = 0;
+
         for (int i = 0; i < sz; ++i) {
             int e = c_edges[c][i];
+            if (use_hermite && h_count < 12) {
+                float3 hn = edge_normals[m * 12 + e];
+                float hlen = maths::norm(hn);
+                if (hlen > 1e-8f) {
+                    h_pts[h_count] = edge_points[m * 12 + e];
+                    h_nrm[h_count] = hn * (1.0f / hlen);
+                    h_count++;
+                }
+            }
             int v0 = dmc_edge_corners[e][0];
             int v1 = dmc_edge_corners[e][1];
             float s0 = s[v0];
@@ -473,6 +489,16 @@ __global__ void dmc_extract_dual_vertices_and_edges_kernel(
             // Fast path: use precomputed inside-voxel vertex directly
             out_vertices[dual_vert_idx] = precomputed_vertices[m];
             float3 pt = precomputed_vertices[m];
+            u = fmaxf(0.0f, fminf(1.0f, (pt.x - c_min.x) / dx));
+            v = fmaxf(0.0f, fminf(1.0f, (pt.y - c_min.y) / dy));
+            w = fmaxf(0.0f, fminf(1.0f, (pt.z - c_min.z) / dz));
+        } else if (use_hermite && h_count > 0) {
+            // Solve the quadratic error function over THIS contour's Hermite data.
+            // Restricting the solve to one contour is what keeps a cell that carries
+            // several contours emitting several distinct vertices, so the manifold
+            // guarantee survives while each vertex still lands on its own feature.
+            float3 pt = maths::solve_qef(h_pts, h_nrm, h_count, c_min, c_max, 0.01f);
+            out_vertices[dual_vert_idx] = pt;
             u = fmaxf(0.0f, fminf(1.0f, (pt.x - c_min.x) / dx));
             v = fmaxf(0.0f, fminf(1.0f, (pt.y - c_min.y) / dy));
             w = fmaxf(0.0f, fminf(1.0f, (pt.z - c_min.z) / dz));
@@ -802,7 +828,9 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_marching_cube
     const c10::optional<at::Tensor> &voxel_vertices,
     float iso,
     bool quad_split,
-    int project_iters
+    int project_iters,
+    const c10::optional<at::Tensor> &edge_points,
+    const c10::optional<at::Tensor> &edge_normals
 ) {
     TORCH_CHECK(grid_vertices.is_cuda(), "grid_vertices must be a CUDA tensor");
     TORCH_CHECK(voxels.is_cuda(), "voxels must be a CUDA tensor");
@@ -889,12 +917,19 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_marching_cube
         ? reinterpret_cast<const float3*>(voxel_vertices->data_ptr<float>())
         : nullptr;
 
+    const float3 *dmc_ep_ptr = (edge_points.has_value() && edge_points->defined() && edge_points->numel() > 0)
+        ? reinterpret_cast<const float3*>(edge_points->data_ptr<float>()) : nullptr;
+    const float3 *dmc_en_ptr = (edge_normals.has_value() && edge_normals->defined() && edge_normals->numel() > 0)
+        ? reinterpret_cast<const float3*>(edge_normals->data_ptr<float>()) : nullptr;
+
     dmc_extract_dual_vertices_and_edges_kernel<<<grid, block, 0, stream>>>(
         reinterpret_cast<const float3*>(grid_vertices.data_ptr<float>()),
         voxels.data_ptr<int>(),
         sdf.data_ptr<float>(),
         colors_ptr,
         precomputed_ptr,
+        dmc_ep_ptr,
+        dmc_en_ptr,
         num_channels,
         vert_offsets.data_ptr<int>(),
         edge_offsets.data_ptr<int>(),

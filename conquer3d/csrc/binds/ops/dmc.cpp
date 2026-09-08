@@ -21,7 +21,9 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_marc
     std::optional<torch::Tensor> voxel_vertices,
     float iso,
     bool quad_split,
-    int project_iters
+    int project_iters,
+    std::optional<torch::Tensor> edge_points,
+    std::optional<torch::Tensor> edge_normals
 ) {
     CHECK_INPUT(grid_vertices);
     CHECK_INPUT(voxels);
@@ -33,6 +35,15 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_marc
     if (voxel_vertices.has_value() && voxel_vertices.value().defined()) {
         CHECK_INPUT(voxel_vertices.value());
     }
+    for (auto *t : {&edge_points, &edge_normals}) {
+        if (t->has_value() && t->value().defined()) {
+            CHECK_INPUT(t->value());
+            TORCH_CHECK(t->value().dim() == 3 && t->value().size(1) == 12 && t->value().size(2) == 3,
+                        "edge_points/edge_normals must have shape (M, 12, 3)");
+            TORCH_CHECK(t->value().size(0) == voxels.size(0),
+                        "edge_points/edge_normals must have one row per voxel");
+        }
+    }
 
     return conquer3d::ops::dual_marching_cubes(
         grid_vertices,
@@ -42,7 +53,9 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_marc
         voxel_vertices,
         iso,
         quad_split,
-        project_iters
+        project_iters,
+        edge_points,
+        edge_normals
     );
 }
 
@@ -99,6 +112,7 @@ void bind_ops_dmc(py::module &m) {
           py::arg("grid_vertices"), py::arg("voxels"), py::arg("sdf"),
           py::arg("colors") = py::none(), py::arg("voxel_vertices") = py::none(),
           py::arg("iso") = 0.0f, py::arg("quad_split") = true, py::arg("project_iters") = 5,
+          py::arg("edge_points") = py::none(), py::arg("edge_normals") = py::none(),
           R"pbdoc(
           Extracts a watertight 2-manifold surface mesh using Differentiable Dual Marching Cubes (Schaefer & Warren 2004) or precomputed voxel vertices.
 

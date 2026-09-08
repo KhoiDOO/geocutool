@@ -138,6 +138,8 @@ __global__ void compute_dual_vertices_kernel(
     const int *__restrict__ voxels,
     const float *__restrict__ sdf,
     const float3 *__restrict__ grid_normals,
+    const float3 *__restrict__ edge_points,
+    const float3 *__restrict__ edge_normals,
     float iso,
     int num_voxels,
     float3 *__restrict__ dual_vertices,
@@ -184,11 +186,27 @@ __global__ void compute_dual_vertices_kernel(
             float t = (iso - s0) / (s1 - s0);
             t = fmaxf(0.0f, fminf(1.0f, t));
 
-            float3 pt = p[v0] + (p[v1] - p[v0]) * t;
+            float3 pt;
+            float3 n;
+            bool have_hermite = (edge_points != nullptr && edge_normals != nullptr);
+            if (have_hermite) {
+                pt = edge_points[m * 12 + e];
+                float3 hn = edge_normals[m * 12 + e];
+                float hlen = maths::norm(hn);
+                if (hlen > 1e-8f) {
+                    n = hn * (1.0f / hlen);
+                } else {
+                    have_hermite = false;
+                }
+            }
+            if (!have_hermite) {
+                pt = p[v0] + (p[v1] - p[v0]) * t;
+            }
             pts[count] = pt;
 
-            float3 n;
-            if (grid_normals != nullptr) {
+            if (have_hermite) {
+                // normal already set from the supplied Hermite data
+            } else if (grid_normals != nullptr) {
                 float3 n0 = grid_normals[c_idx[v0]];
                 float3 n1 = grid_normals[c_idx[v1]];
                 float3 n_interp = n0 + (n1 - n0) * t;
@@ -665,7 +683,9 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_contouring(
     const c10::optional<at::Tensor> &colors,
     const c10::optional<at::Tensor> &voxel_vertices,
     float iso,
-    bool quad_split
+    bool quad_split,
+    const c10::optional<at::Tensor> &edge_points,
+    const c10::optional<at::Tensor> &edge_normals
 ) {
     at::cuda::CUDAGuard device_guard(grid_vertices.device());
     auto allocator = at::cuda::ThrustAllocator();
@@ -705,12 +725,18 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_contouring(
         dual_vertices = at::empty({num_voxels, 3}, grid_vertices.options());
         source_dual_vertices_ptr = reinterpret_cast<const float3*>(dual_vertices.data_ptr<float>());
         const float3 *normals_ptr = grid_normals.has_value() ? reinterpret_cast<const float3*>(grid_normals.value().data_ptr<float>()) : nullptr;
+        const float3 *ep_ptr = (edge_points.has_value() && edge_points.value().defined() && edge_points.value().numel() > 0)
+            ? reinterpret_cast<const float3*>(edge_points.value().data_ptr<float>()) : nullptr;
+        const float3 *en_ptr = (edge_normals.has_value() && edge_normals.value().defined() && edge_normals.value().numel() > 0)
+            ? reinterpret_cast<const float3*>(edge_normals.value().data_ptr<float>()) : nullptr;
 
         compute_dual_vertices_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
             reinterpret_cast<const float3*>(grid_vertices.data_ptr<float>()),
             voxels.data_ptr<int>(),
             sdf.data_ptr<float>(),
             normals_ptr,
+            ep_ptr,
+            en_ptr,
             iso,
             num_voxels,
             reinterpret_cast<float3*>(dual_vertices.data_ptr<float>()),
@@ -910,6 +936,8 @@ std::tuple<at::Tensor, c10::optional<at::Tensor>> dual_contouring_backward(
         voxels.data_ptr<int>(),
         sdf.data_ptr<float>(),
         normals_ptr,
+        nullptr,
+        nullptr,
         iso,
         num_voxels,
         reinterpret_cast<float3*>(dual_vertices.data_ptr<float>()),

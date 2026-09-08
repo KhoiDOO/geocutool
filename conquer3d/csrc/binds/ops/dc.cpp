@@ -21,7 +21,9 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_cont
     std::optional<torch::Tensor> colors,
     std::optional<torch::Tensor> voxel_vertices,
     float iso,
-    bool quad_split
+    bool quad_split,
+    std::optional<torch::Tensor> edge_points,
+    std::optional<torch::Tensor> edge_normals
 ) {
     CHECK_INPUT(grid_vertices);
     CHECK_INPUT(voxels);
@@ -36,6 +38,20 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_cont
     if (voxel_vertices.has_value() && voxel_vertices.value().defined()) {
         CHECK_INPUT(voxel_vertices.value());
     }
+    if (edge_points.has_value() && edge_points.value().defined()) {
+        CHECK_INPUT(edge_points.value());
+        TORCH_CHECK(edge_points.value().dim() == 3 && edge_points.value().size(1) == 12 && edge_points.value().size(2) == 3,
+                    "edge_points must have shape (M, 12, 3)");
+        TORCH_CHECK(edge_points.value().size(0) == voxels.size(0),
+                    "edge_points must have one row per voxel");
+    }
+    if (edge_normals.has_value() && edge_normals.value().defined()) {
+        CHECK_INPUT(edge_normals.value());
+        TORCH_CHECK(edge_normals.value().dim() == 3 && edge_normals.value().size(1) == 12 && edge_normals.value().size(2) == 3,
+                    "edge_normals must have shape (M, 12, 3)");
+        TORCH_CHECK(edge_normals.value().size(0) == voxels.size(0),
+                    "edge_normals must have one row per voxel");
+    }
 
     return conquer3d::ops::dual_contouring(
         grid_vertices,
@@ -45,7 +61,9 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> dual_cont
         colors,
         voxel_vertices,
         iso,
-        quad_split
+        quad_split,
+        edge_points,
+        edge_normals
     );
 }
 
@@ -106,6 +124,7 @@ void bind_ops_dc(py::module &m) {
           py::arg("grid_normals") = py::none(), py::arg("colors") = py::none(),
           py::arg("voxel_vertices") = py::none(),
           py::arg("iso") = 0.0f, py::arg("quad_split") = true,
+          py::arg("edge_points") = py::none(), py::arg("edge_normals") = py::none(),
           R"pbdoc(
           Extracts a sharp-feature preserving surface mesh using Dual Contouring with GPU QEF solver (Ju et al. 2002) or precomputed voxel vertices.
 

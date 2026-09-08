@@ -30,7 +30,9 @@ std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>> dual_contouring(
     const c10::optional<at::Tensor> &colors = c10::nullopt,
     const c10::optional<at::Tensor> &voxel_vertices = c10::nullopt,
     float iso = 0.0f,
-    bool quad_split = true
+    bool quad_split = true,
+    const c10::optional<at::Tensor> &edge_points = c10::nullopt,
+    const c10::optional<at::Tensor> &edge_normals = c10::nullopt
 );
 
 /**

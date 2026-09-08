@@ -95,7 +95,9 @@ def dual_marching_cubes(
     voxel_vertices: Optional[torch.Tensor] = None,
     iso: float = 0.0,
     quad_split: bool = True,
-    project_iters: int = 5
+    project_iters: int = 5,
+    edge_points: Optional[torch.Tensor] = None,
+    edge_normals: Optional[torch.Tensor] = None
 ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     """Extracts a strictly 2-manifold surface mesh from a voxel grid using Differentiable Dual Marching Cubes.
 
@@ -120,6 +122,17 @@ def dual_marching_cubes(
         quad_split (bool, optional): If True, splits dual quadrilaterals into 2 triangles using
             the optimal Delaunay angle criterion; if False, returns quads of shape `(Q, 4)`.
             Defaults to True.
+        edge_points (torch.Tensor, optional): Float32 tensor of shape `(M, 12, 3)` giving the
+            exact surface intersection of each voxel-local edge, in
+            :data:`conquer3d.ops.hermite.DC_EDGE_CORNERS` order. Supplied together with
+            `edge_normals`, this replaces the centroid-and-projection placement with a
+            quadratic error function solved per contour, which is what lets Dual Marching
+            Cubes reproduce sharp creases instead of rounding them. Solving per contour
+            rather than per cell keeps a cell that carries several contours emitting
+            several distinct vertices, preserving the manifold guarantee. Defaults to None.
+        edge_normals (torch.Tensor, optional): Float32 tensor of shape `(M, 12, 3)` giving the
+            exact surface normal at each `edge_points` entry. Must accompany `edge_points`.
+            Defaults to None.
         project_iters (int, optional): Number of Newton-Raphson level-set projection iterations.
             Defaults to 5.
 
@@ -160,8 +173,22 @@ def dual_marching_cubes(
     #         grid_vertices, voxels, sdf, colors, voxel_vertices, iso, quad_split, project_iters
     #     )
     # else:
+    if (edge_points is None) != (edge_normals is None):
+        raise ValueError("edge_points and edge_normals must be supplied together")
+    if edge_points is not None:
+        edge_points = edge_points.contiguous().float()
+        edge_normals = edge_normals.contiguous().float()
+        for name, t in (("edge_points", edge_points), ("edge_normals", edge_normals)):
+            if not t.is_cuda:
+                raise RuntimeError(f"{name} must be on CUDA")
+            if t.shape != (voxels.shape[0], 12, 3):
+                raise ValueError(
+                    f"{name} must have shape ({voxels.shape[0]}, 12, 3), got {tuple(t.shape)}"
+                )
+
     verts, faces, out_colors = _C.dual_marching_cubes(
-        grid_vertices, voxels, sdf, colors, voxel_vertices, iso, quad_split, project_iters
+        grid_vertices, voxels, sdf, colors, voxel_vertices, iso, quad_split, project_iters,
+        edge_points, edge_normals
     )
 
     if colors is None:

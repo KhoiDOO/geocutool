@@ -13,6 +13,7 @@ This package provides:
 from .marching_cubes import marching_cubes
 from .marching_cubes_asymptotic import marching_cubes_asymptotic, mca
 from .dual_contouring import dual_contouring, dc
+from .hermite import compute_hermite_from_mesh, compute_hermite_from_field, DC_EDGE_CORNERS
 from .dual_marching_cubes import dual_marching_cubes, dmc
 from .diff_marching_cubes import diff_marching_cubes
 
@@ -31,6 +32,9 @@ __all__ = [
     "mca",
     "dual_contouring",
     "dc",
+    "compute_hermite_from_mesh",
+    "compute_hermite_from_field",
+    "DC_EDGE_CORNERS",
     "dual_marching_cubes",
     "dmc",
     "diff_marching_cubes",

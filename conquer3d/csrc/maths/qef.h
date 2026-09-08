@@ -144,6 +144,7 @@ __host__ __device__ __forceinline__ void symmetric_eigen_3x3(
  * @param cell_min Minimum AABB coordinate of the voxel cell.
  * @param cell_max Maximum AABB coordinate of the voxel cell.
  * @param svd_tolerance Relative eigenvalue threshold for pseudoinverse (default: 0.01).
+ * @param cell_expand Scale applied to the cell half-extents before clamping (default: 2.0).
  * @return Optimal inner vertex position x*.
  */
 __host__ __device__ __forceinline__ float3 solve_qef(
@@ -152,11 +153,17 @@ __host__ __device__ __forceinline__ float3 solve_qef(
     int count,
     const float3 &cell_min,
     const float3 &cell_max,
-    float svd_tolerance = 0.01f
+    float svd_tolerance = 0.01f,
+    float cell_expand = 2.0f
 ) {
     if (count <= 0) {
         return (cell_min + cell_max) * 0.5f;
     }
+
+    const float3 cell_centre = (cell_min + cell_max) * 0.5f;
+    const float3 cell_half = (cell_max - cell_min) * (0.5f * cell_expand);
+    const float3 clamp_min = cell_centre - cell_half;
+    const float3 clamp_max = cell_centre + cell_half;
 
     // 1. Compute Mass Point (Centroid)
     float3 mass_point = make_float3(0.0f, 0.0f, 0.0f);
@@ -166,7 +173,7 @@ __host__ __device__ __forceinline__ float3 solve_qef(
     mass_point = mass_point * (1.0f / (float)count);
 
     if (count == 1) {
-        return maths::clamp(pts[0], cell_min, cell_max);
+        return maths::clamp(pts[0], clamp_min, clamp_max);
     }
 
     // 2. Build Shifted Normal Equation System: (A^T A) y = b_tilde
@@ -224,9 +231,9 @@ __host__ __device__ __forceinline__ float3 solve_qef(
         y = y + v2 * proj;
     }
 
-    // 5. Unshift and Clamp to Voxel AABB
+    // 5. Unshift and Clamp to the (optionally widened) Voxel AABB
     float3 x = mass_point + y;
-    x = maths::clamp(x, cell_min, cell_max);
+    x = maths::clamp(x, clamp_min, clamp_max);
 
     return x;
 }
