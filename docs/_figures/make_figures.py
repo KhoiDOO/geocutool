@@ -171,8 +171,7 @@ AZ_ALGO = 218
 
 
 def fig_algorithms(rnd):
-    from conquer3d.ops import (compute_hermite_from_mesh, dc, dmc, marching_cubes,
-                               marching_tetrahedra_grid, mca)
+    from conquer3d.ops import compute_hermite_from_mesh, dc, dmc, marching_cubes, mca
 
     tmesh = load_mesh(_asset("Fandisk"))
     tmesh.compute_triangle_normals()
@@ -189,12 +188,10 @@ def fig_algorithms(rnd):
                                         edge_points=ep, edge_normals=en)),
         "Dual Marching Cubes": first_two(dmc(gv, vox, sdf, iso=0.0,
                                              edge_points=ep, edge_normals=en)),
-        "Marching Tetrahedra": first_two(marching_tetrahedra_grid(gv, vox, sdf, iso=0.0)),
     }
 
-    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER, R.ROSE]
-    accents = [(34, 211, 238), (118, 185, 0), (167, 139, 250),
-               (251, 191, 36), (251, 113, 133)]
+    tints = [R.CYAN, R.GREEN, R.VIOLET, R.AMBER]
+    accents = [(34, 211, 238), (118, 185, 0), (167, 139, 250), (251, 191, 36)]
 
     # Zoom where Marching Cubes and Dual Contouring disagree most: the crease.
     # Located from the plain Dual Contouring run, not the Hermite one, so that

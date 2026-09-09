@@ -302,8 +302,28 @@ def manifest_entry(layout: ApiLayout, groups: List[Group], tag: str = "") -> dic
         "current": layout.current,
         "documented": sum(g.counts[0] for g in groups),
         "total": sum(g.counts[1] for g in groups),
-        "page": {layout.page(g): layout.href(g) for g in groups},
+        # Sorted so a freshly built version and one read back from disk
+        # serialise identically; otherwise every rebuild reorders the file.
+        "page": dict(sorted((layout.page(g), layout.href(g)) for g in groups)),
     }
+
+
+def _recorded_counts(path: str) -> tuple:
+    """Coverage a previous build recorded for a version directory.
+
+    Re-parsing a frozen release just to count its symbols would mean a Doxygen
+    run per version on every build. The numbers were computed when it was built,
+    so they are read back from the manifest instead -- otherwise an ordinary
+    rebuild rewrites them to zero and dirties the file every time.
+    """
+    try:
+        rows = json.loads((DOCS / "api" / "versions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0, 0
+    for row in rows:
+        if row.get("path") == path:
+            return row.get("documented", 0), row.get("total", 0)
+    return 0, 0
 
 
 def manifest_from_disk(layout: ApiLayout, tag: str) -> dict:
@@ -318,13 +338,14 @@ def manifest_from_disk(layout: ApiLayout, tag: str) -> dict:
         for p in sorted(out_dir.glob("*.html"))
         if p.name != "index.html"
     }
+    documented, total = _recorded_counts(layout.root)
     return {
         "version": layout.version,
         "tag": tag,
         "path": layout.root,
         "current": False,
-        "documented": 0,
-        "total": 0,
+        "documented": documented,
+        "total": total,
         "page": pages,
     }
 

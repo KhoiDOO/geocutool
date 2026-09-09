@@ -12,7 +12,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.0%2B-76B900?logo=nvidia&logoColor=white&style=for-the-badge)](https://developer.nvidia.com/cuda-toolkit)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?logo=pytorch&logoColor=white&style=for-the-badge)](https://pytorch.org/)
-[![API Coverage](https://img.shields.io/badge/API_docs-1020_symbols_·_100%25-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
+[![API Coverage](https://img.shields.io/badge/API_docs-100%25_documented-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
 
 <p align="center">
   <b><a href="https://khoidoo.github.io/conquer3d/">🌐 Website</a></b> •
@@ -69,11 +69,12 @@ on the **[showcase](https://khoidoo.github.io/conquer3d/)**.
 
 ### Isosurface extraction
 
-<img src="docs/assets/img/fig-algorithms.webp" alt="Five extractors on one signed distance field" width="100%">
+<img src="docs/assets/img/fig-algorithms.webp" alt="Four extractors on one signed distance field" width="100%">
 
-One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed by five
-extractors, with the source mesh on the left. The lower row crops the crease where
-Marching Cubes and Dual Contouring disagree most.
+One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed by four
+extractors — Marching Cubes, MC Asymptotic, Dual Contouring and Dual Marching Cubes —
+with the source mesh on the left. The lower row crops the crease where Marching Cubes
+and Dual Contouring disagree most.
 
 ### Sharp features from Hermite data
 
@@ -142,7 +143,7 @@ on the **[benchmarks page](https://khoidoo.github.io/conquer3d/benchmarks.html)*
 pip install -U conquer3d
 ```
 
-Building from source, the full feature list, worked pipelines and the 1,020-symbol API
+Building from source, the full feature list, worked pipelines and the complete API
 reference are on the **[documentation site](https://khoidoo.github.io/conquer3d/documentation.html)**.
 
 ---
