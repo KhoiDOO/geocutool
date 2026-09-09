@@ -12,7 +12,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.0%2B-76B900?logo=nvidia&logoColor=white&style=for-the-badge)](https://developer.nvidia.com/cuda-toolkit)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?logo=pytorch&logoColor=white&style=for-the-badge)](https://pytorch.org/)
-[![API Coverage](https://img.shields.io/badge/API_docs-1020_symbols_·_100%25-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
+[![API Coverage](https://img.shields.io/badge/API_docs-100%25_documented-76B900?style=for-the-badge)](https://khoidoo.github.io/conquer3d/api/index.html)
 
 <p align="center">
   <b><a href="https://khoidoo.github.io/conquer3d/">🌐 Website</a></b> •
@@ -143,7 +143,7 @@ on the **[benchmarks page](https://khoidoo.github.io/conquer3d/benchmarks.html)*
 pip install -U conquer3d
 ```
 
-Building from source, the full feature list, worked pipelines and the 1,020-symbol API
+Building from source, the full feature list, worked pipelines and the complete API
 reference are on the **[documentation site](https://khoidoo.github.io/conquer3d/documentation.html)**.
 
 ---
