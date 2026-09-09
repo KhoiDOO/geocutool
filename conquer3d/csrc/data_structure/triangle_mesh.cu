@@ -97,15 +97,35 @@ __global__ void compute_triangle_areas_kernel(
  * pointer-to-member through the launch stub it generates for a `__global__` template.
  * As a type parameter the call still resolves at compile time and inlines away.
  */
-struct MetricQuality           { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_quality(); } };
+struct MetricQuality {
+    /** @brief Evaluates ::Triangle::compute_quality for one face. */
+    __device__ __forceinline__ float operator()(const Triangle &T) const
+    { return T.compute_quality(); }
+};
 /** @brief Selects ::Triangle::compute_triangle_regularity. */
-struct MetricRegularity        { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_triangle_regularity(); } };
+struct MetricRegularity {
+    /** @brief Evaluates ::Triangle::compute_triangle_regularity for one face. */
+    __device__ __forceinline__ float operator()(const Triangle &T) const
+    { return T.compute_triangle_regularity(); }
+};
 /** @brief Selects ::Triangle::compute_radius_edge_ratio. */
-struct MetricRadiusEdgeRatio   { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_radius_edge_ratio(); } };
+struct MetricRadiusEdgeRatio {
+    /** @brief Evaluates ::Triangle::compute_radius_edge_ratio for one face. */
+    __device__ __forceinline__ float operator()(const Triangle &T) const
+    { return T.compute_radius_edge_ratio(); }
+};
 /** @brief Selects ::Triangle::compute_angle_deviation. */
-struct MetricAngleDeviation    { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_angle_deviation(); } };
+struct MetricAngleDeviation {
+    /** @brief Evaluates ::Triangle::compute_angle_deviation for one face. */
+    __device__ __forceinline__ float operator()(const Triangle &T) const
+    { return T.compute_angle_deviation(); }
+};
 /** @brief Selects ::Triangle::compute_radii_ratio. */
-struct MetricRadiiRatio        { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_radii_ratio(); } };
+struct MetricRadiiRatio {
+    /** @brief Evaluates ::Triangle::compute_radii_ratio for one face. */
+    __device__ __forceinline__ float operator()(const Triangle &T) const
+    { return T.compute_radii_ratio(); }
+};
 
 /**
  * @brief Evaluates one per-triangle quality metric over the whole mesh.
