@@ -5,6 +5,7 @@
 
 #include "bvh.h"
 #include "zcurve.h"
+#include "bvh_traverse.cuh"
 #include "../primitive/ray.h"
 
 #include <thrust/device_vector.h>
@@ -434,41 +435,19 @@ __global__ void query_bvh_kernel(
         float3 q_max = query_maxs[q_idx];
 
         // The local thread stack
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        
-        // Push the Root Node (Index 0) to start
-        stack[0] = 0; 
-
-        while (stack_ptr >= 0) 
-        {
-            int node_idx = stack[stack_ptr--]; 
-
-            if (aabb::test_aabb_overlap(q_min, q_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx])) 
-            {
-                if (node_idx >= num_objects - 1) 
-                {
-                    int leaf_idx = node_idx - (num_objects - 1);
-                    int original_obj_id = object_ids[leaf_idx];
-
-                    uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
-
-                    if (write_idx < max_capacity) {
-                        out_query_ids[write_idx] = q_idx;
-                        out_object_ids[write_idx] = original_obj_id;
-                    }
-                } 
-                else 
-                {
-                    if (stack_ptr + 2 < BVH_STACK_SIZE)
-                    {
-                        int2 children = bvh_children[node_idx];
-                        stack[++stack_ptr] = children.x;
-                        stack[++stack_ptr] = children.y;
-                    }
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(q_min, q_max,
+                    bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
+                if (write_idx < max_capacity) {
+                    out_query_ids[write_idx] = q_idx;
+                    out_object_ids[write_idx] = object_ids[leaf_idx];
                 }
-            }
-        }
+                return true;
+            });
     }
 
     void query(
@@ -545,42 +524,22 @@ __global__ void query_self_bvh_kernel(
         float3 q_max = bvh_aabb_maxs[node_offset + leaf_idx];
         int original_q_id = object_ids[leaf_idx];
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0; 
-
-        while (stack_ptr >= 0) 
-        {
-            int node_idx = stack[stack_ptr--]; 
-
-            if (aabb::test_aabb_overlap(q_min, q_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx])) 
-            {
-                if (node_idx >= num_objects - 1) 
-                {
-                    int other_leaf_idx = node_idx - (num_objects - 1);
-                    int original_obj_id = object_ids[other_leaf_idx];
-
-                    if (original_q_id < original_obj_id) 
-                    {
-                        uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
-
-                        if (write_idx < max_capacity) {
-                            out_query_ids[write_idx] = original_q_id;
-                            out_object_ids[write_idx] = original_obj_id;
-                        }
-                    }
-                } 
-                else 
-                {
-                    if (stack_ptr + 2 < BVH_STACK_SIZE)
-                    {
-                        int2 children = bvh_children[node_idx];
-                        stack[++stack_ptr] = children.x;
-                        stack[++stack_ptr] = children.y;
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(q_min, q_max,
+                    bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int other_leaf_idx) {
+                int original_obj_id = object_ids[other_leaf_idx];
+                if (original_q_id < original_obj_id) {
+                    uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
+                    if (write_idx < max_capacity) {
+                        out_query_ids[write_idx] = original_q_id;
+                        out_object_ids[write_idx] = original_obj_id;
                     }
                 }
-            }
-        }
+                return true;
+            });
     }
 
     void query_self(
@@ -655,40 +614,20 @@ __global__ void query_ray_bvh_kernel(
 
         Ray ray(ray_origins[q_idx], ray_dirs[q_idx]);
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0; 
-
-        while (stack_ptr >= 0) 
-        {
-            int node_idx = stack[stack_ptr--]; 
-            float t_hit;
-
-            if (ray.is_intersect_aabb(bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx], t_hit)) 
-            {
-                if (node_idx >= num_objects - 1) 
-                {
-                    int leaf_idx = node_idx - (num_objects - 1);
-                    int original_obj_id = object_ids[leaf_idx];
-
-                    uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
-
-                    if (write_idx < max_capacity) {
-                        out_query_ids[write_idx] = q_idx;
-                        out_object_ids[write_idx] = original_obj_id;
-                    }
-                } 
-                else 
-                {
-                    if (stack_ptr + 2 < BVH_STACK_SIZE)
-                    {
-                        int2 children = bvh_children[node_idx];
-                        stack[++stack_ptr] = children.x;
-                        stack[++stack_ptr] = children.y;
-                    }
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                float t_hit;
+                return ray.is_intersect_aabb(bvh_aabb_mins[node_idx],
+                                             bvh_aabb_maxs[node_idx], t_hit);
+            },
+            [&] (int leaf_idx) {
+                uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int*)hit_counter, 1ULL);
+                if (write_idx < max_capacity) {
+                    out_query_ids[write_idx] = q_idx;
+                    out_object_ids[write_idx] = object_ids[leaf_idx];
                 }
-            }
-        }
+                return true;
+            });
     }
 
     void query_ray(

@@ -3,6 +3,7 @@
  * @brief CUDA kernel implementations for analytical Axis-Aligned Bounding Box (AABB) bounds of Periodic Gaussians.
  */
 
+#include "../data_structure/bvh_traverse.cuh"
 #include "pgs.h"
 #include "pgs_math.cuh"
 
@@ -223,74 +224,56 @@ __global__ void query_pgs_voxel_pair_intersection_bvh_kernel(
         bool any_hit = false;
 
         // --- BVH LOCAL STACK ---
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0; 
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            if (aabb::test_aabb_overlap(vx_ab_min, vx_ab_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]))
-            {
-                if (node_idx >= num_gaussians - 1)
-                {
-                    int leaf_idx = node_idx - (num_gaussians - 1);
-                    uint32_t g_idx = object_ids[leaf_idx];
-
-                    float3 mean = means[g_idx];
-                    float3 normal = normals[g_idx];
-                    const float *covi = covis + (g_idx * 6);
-                    float3 gs_ab_min = gs_aabb_mins[g_idx];
-                    float3 gs_ab_max = gs_aabb_maxs[g_idx];
-
-                    bool broad_hit = test_pgs_intersect_voxel(
-                        mean, normal, gs_ab_min, gs_ab_max, vx_ab_min, vx_ab_max);
-
-                    if (broad_hit)
-                    {
-                        float __iso = multiple_isos ? isos[g_idx] : iso;
-                        float3 centroid;
-                        
-                        bool narrow_hit = compute_pgs_voxel_centroid(
-                            mean, normal, covi, __iso, vx_ab_min, vx_ab_max, return_centroids, centroid);
-
-                        if (narrow_hit)
+        bvh::traverse(num_gaussians, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(vx_ab_min, vx_ab_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                        uint32_t g_idx = object_ids[leaf_idx];
+    
+                        float3 mean = means[g_idx];
+                        float3 normal = normals[g_idx];
+                        const float *covi = covis + (g_idx * 6);
+                        float3 gs_ab_min = gs_aabb_mins[g_idx];
+                        float3 gs_ab_max = gs_aabb_maxs[g_idx];
+    
+                        bool broad_hit = test_pgs_intersect_voxel(
+                            mean, normal, gs_ab_min, gs_ab_max, vx_ab_min, vx_ab_max);
+    
+                        if (broad_hit)
                         {
-                            any_hit = true;
-                            uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int *)global_counter, 1ULL);
-
-                            if (write_idx < max_capacity)
+                            float __iso = multiple_isos ? isos[g_idx] : iso;
+                            float3 centroid;
+                            
+                            bool narrow_hit = compute_pgs_voxel_centroid(
+                                mean, normal, covi, __iso, vx_ab_min, vx_ab_max, return_centroids, centroid);
+    
+                            if (narrow_hit)
                             {
-                                out_voxel_ids[write_idx] = v_idx;
-                                out_gaus_ids[write_idx] = g_idx;
-
-                                if (return_centroids)
+                                any_hit = true;
+                                uint64_t write_idx = (uint64_t)atomicAdd((unsigned long long int *)global_counter, 1ULL);
+    
+                                if (write_idx < max_capacity)
                                 {
-                                    centroids[write_idx] = centroid;
-
-                                    if (return_centroid_densities)
+                                    out_voxel_ids[write_idx] = v_idx;
+                                    out_gaus_ids[write_idx] = g_idx;
+    
+                                    if (return_centroids)
                                     {
-                                        float density;
-                                        gs::compute_density(centroid, mean, covi, 1.0f, density);
-                                        densities[write_idx] = density;
+                                        centroids[write_idx] = centroid;
+    
+                                        if (return_centroid_densities)
+                                        {
+                                            float density;
+                                            gs::compute_density(centroid, mean, covi, 1.0f, density);
+                                            densities[write_idx] = density;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                }
-                else
-                {
-                    if (stack_ptr + 2 < BVH_STACK_SIZE)
-                    {
-                        int2 children = bvh_children[node_idx];
-                        stack[++stack_ptr] = children.x;
-                        stack[++stack_ptr] = children.y;
-                    }
-                }
-            }
-        }
+                return true;
+            });
         hit_mask[v_idx] = any_hit;
     }
 
@@ -436,62 +419,44 @@ __global__ void query_pgs_edge_intersection_bvh_kernel(
         float max_density = -1.0f;
         int best_gs = -1;
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0; 
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            if (aabb::test_aabb_overlap(e_ab_min, e_ab_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]))
-            {
-                if (node_idx >= num_gaussians - 1)
-                {
-                    int leaf_idx = node_idx - (num_gaussians - 1);
-                    uint32_t g_idx = object_ids[leaf_idx];
-
-                    float3 mean = means[g_idx];
-                    float3 normal = normals[g_idx];
-                    const float *covi = covis + (g_idx * 6);
-                    float __iso = multiple_isos ? isos[g_idx] : iso;
-
-                    float t_hit;
-
-                    bool hit = pgs::test_pgs_segment(
-                        mean, normal, covi, __iso, edge_start, edge_end, t_hit);
-
-                    if (hit)
-                    {
-                        any_hit = true;
-
-                        float3 p_hit = make_float3(
-                            edge_start.x + t_hit * (edge_end.x - edge_start.x),
-                            edge_start.y + t_hit * (edge_end.y - edge_start.y),
-                            edge_start.z + t_hit * (edge_end.z - edge_start.z)
-                        );
-
-                        float density;
-                        gs::compute_density(p_hit, mean, covi, opacities[g_idx], density);
-
-                        if (density > max_density)
+        bvh::traverse(num_gaussians, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(e_ab_min, e_ab_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                        uint32_t g_idx = object_ids[leaf_idx];
+    
+                        float3 mean = means[g_idx];
+                        float3 normal = normals[g_idx];
+                        const float *covi = covis + (g_idx * 6);
+                        float __iso = multiple_isos ? isos[g_idx] : iso;
+    
+                        float t_hit;
+    
+                        bool hit = pgs::test_pgs_segment(
+                            mean, normal, covi, __iso, edge_start, edge_end, t_hit);
+    
+                        if (hit)
                         {
-                            max_density = density;
-                            best_gs = g_idx;
+                            any_hit = true;
+    
+                            float3 p_hit = make_float3(
+                                edge_start.x + t_hit * (edge_end.x - edge_start.x),
+                                edge_start.y + t_hit * (edge_end.y - edge_start.y),
+                                edge_start.z + t_hit * (edge_end.z - edge_start.z)
+                            );
+    
+                            float density;
+                            gs::compute_density(p_hit, mean, covi, opacities[g_idx], density);
+    
+                            if (density > max_density)
+                            {
+                                max_density = density;
+                                best_gs = g_idx;
+                            }
                         }
-                    }
-                }
-                else
-                {
-                    if (stack_ptr + 2 < BVH_STACK_SIZE)
-                    {
-                        int2 children = bvh_children[node_idx];
-                        stack[++stack_ptr] = children.x;
-                        stack[++stack_ptr] = children.y;
-                    }
-                }
-            }
-        }
+                return true;
+            });
 
         out_gaus_ids[e_idx] = best_gs;
         hit_mask[e_idx] = any_hit;

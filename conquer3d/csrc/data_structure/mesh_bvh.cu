@@ -4,6 +4,7 @@
  */
 
 #include "mesh_bvh.h"
+#include "bvh_traverse.cuh"
 #include "../primitive/triangle.h"
 #include "../primitive/edge.h"
 #include <thrust/device_vector.h>
@@ -239,42 +240,19 @@ __global__ void filter_ray_triangle_intersections_kernel(
         Ray ray2(p, ray_dir, 0.0f);
 
         int hit_count = 0;
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0;
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            float t_hit_aabb;
-            if (!ray2.is_intersect_aabb(bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx], t_hit_aabb))
-            {
-                continue;
-            }
-
-            if (node_idx >= num_objects - 1)
-            {
-                int tri_id = object_ids[node_idx - (num_objects - 1)];
-                int3 tri = triangles[tri_id];
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                float t_hit_aabb;
+                return ray2.is_intersect_aabb(bvh_aabb_mins[node_idx],
+                                              bvh_aabb_maxs[node_idx], t_hit_aabb);
+            },
+            [&] (int leaf_idx) {
+                int3 tri = triangles[object_ids[leaf_idx]];
                 Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-
                 float t_hit, u, v;
-                if (T.is_intersect_ray(ray2, t_hit, u, v))
-                {
-                    hit_count++;
-                }
-            }
-            else
-            {
-                if (stack_ptr + 2 < BVH_STACK_SIZE)
-                {
-                    int2 children = bvh_children[node_idx];
-                    stack[++stack_ptr] = children.x;
-                    stack[++stack_ptr] = children.y;
-                }
-            }
-        }
+                if (T.is_intersect_ray(ray2, t_hit, u, v)) hit_count++;
+                return true;
+            });
 
         return (hit_count % 2 == 1) ? -1.0f : 1.0f;
     }
@@ -934,41 +912,18 @@ __global__ void query_voxel_mesh_bvh_kernel(
         float3 q_min = query_mins[q_idx];
         float3 q_max = query_maxs[q_idx];
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0;
-
         bool is_intersect = false;
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            if (!aabb::test_aabb_overlap(q_min, q_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]))
-                continue;
-
-            if (node_idx >= num_objects - 1)
-            {
-                int tri_id = object_ids[node_idx - (num_objects - 1)];
-                int3 tri = triangles[tri_id];
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(q_min, q_max,
+                    bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                int3 tri = triangles[object_ids[leaf_idx]];
                 Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-
-                if (T.is_voxel_intersect(q_min, q_max))
-                {
-                    is_intersect = true;
-                    break;
-                }
-            }
-            else
-            {
-                if (stack_ptr + 2 < BVH_STACK_SIZE)
-                {
-                    int2 children = bvh_children[node_idx];
-                    stack[++stack_ptr] = children.x;
-                    stack[++stack_ptr] = children.y;
-                }
-            }
-        }
+                if (T.is_voxel_intersect(q_min, q_max)) { is_intersect = true; return false; }
+                return true;
+            });
 
         out_intersect[q_idx] = is_intersect;
     }
@@ -1066,40 +1021,18 @@ __global__ void count_active_voxels_mesh_bvh_kernel(
             q_min.y + voxel_size.y,
             q_min.z + voxel_size.z);
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0;
         bool is_intersect = false;
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            if (!aabb::test_aabb_overlap(q_min, q_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]))
-                continue;
-
-            if (node_idx >= num_objects - 1)
-            {
-                int tri_id = object_ids[node_idx - (num_objects - 1)];
-                int3 tri = triangles[tri_id];
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(q_min, q_max,
+                    bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                int3 tri = triangles[object_ids[leaf_idx]];
                 Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-
-                if (T.is_voxel_intersect(q_min, q_max))
-                {
-                    is_intersect = true;
-                    break;
-                }
-            }
-            else
-            {
-                if (stack_ptr + 2 < BVH_STACK_SIZE)
-                {
-                    int2 children = bvh_children[node_idx];
-                    stack[++stack_ptr] = children.x;
-                    stack[++stack_ptr] = children.y;
-                }
-            }
-        }
+                if (T.is_voxel_intersect(q_min, q_max)) { is_intersect = true; return false; }
+                return true;
+            });
 
         if (is_intersect) {
             atomicAdd(active_counter, 1ULL);
@@ -1166,40 +1099,18 @@ __global__ void collect_active_voxels_mesh_bvh_kernel(
             q_min.y + voxel_size.y,
             q_min.z + voxel_size.z);
 
-        int stack[BVH_STACK_SIZE];
-        int stack_ptr = 0;
-        stack[0] = 0;
         bool is_intersect = false;
-
-        while (stack_ptr >= 0)
-        {
-            int node_idx = stack[stack_ptr--];
-
-            if (!aabb::test_aabb_overlap(q_min, q_max, bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]))
-                continue;
-
-            if (node_idx >= num_objects - 1)
-            {
-                int tri_id = object_ids[node_idx - (num_objects - 1)];
-                int3 tri = triangles[tri_id];
+        bvh::traverse(num_objects, bvh_children,
+            [&] (int node_idx) {
+                return aabb::test_aabb_overlap(q_min, q_max,
+                    bvh_aabb_mins[node_idx], bvh_aabb_maxs[node_idx]);
+            },
+            [&] (int leaf_idx) {
+                int3 tri = triangles[object_ids[leaf_idx]];
                 Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-
-                if (T.is_voxel_intersect(q_min, q_max))
-                {
-                    is_intersect = true;
-                    break;
-                }
-            }
-            else
-            {
-                if (stack_ptr + 2 < BVH_STACK_SIZE)
-                {
-                    int2 children = bvh_children[node_idx];
-                    stack[++stack_ptr] = children.x;
-                    stack[++stack_ptr] = children.y;
-                }
-            }
-        }
+                if (T.is_voxel_intersect(q_min, q_max)) { is_intersect = true; return false; }
+                return true;
+            });
 
         if (is_intersect) {
             unsigned long long write_idx = atomicAdd(active_counter, 1ULL);

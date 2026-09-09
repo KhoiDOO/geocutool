@@ -78,29 +78,88 @@ __global__ void compute_triangle_areas_kernel(
     }
 
 /**
- * @brief Computes a normalised shape quality score for every triangle.
- * @details One thread per triangle. The score approaches 1 for an equilateral triangle and
- * 0 for a degenerate sliver, giving a single scalar for mesh quality assessment.
- * @param[in] num_triangles Number of triangles.
- * @param[in] vertices Device array of mesh vertex coordinates.
+ * @brief Evaluates one per-triangle quality metric over the whole mesh.
+ * @details The six quality measures differ only in which ::Triangle method they call, so
+ * the metric is a template parameter rather than a copied kernel. Binding it as a member
+ * function pointer keeps the call resolved at compile time -- it inlines exactly as the
+ * hand-written kernels did -- and avoids needing device lambdas, which would require
+ * `--expt-extended-lambda` on the build.
+ * @tparam Metric Const member of ::Triangle returning the measure for one face.
+ * @param[in] num_triangles Number of faces.
+ * @param[in] vertices Device array of vertex coordinates.
  * @param[in] triangles Device array of triangle vertex indices.
- * @param[out] qualities Device array of per-triangle quality scores in $[0, 1]$.
+ * @param[out] out Device array receiving one value per face.
  * @note Launched with `NTHREADS` threads per block over a 1D grid.
  */
-__global__ void compute_quality_kernel(
+/**
+ * @brief Metric functors selecting one ::Triangle quality measure.
+ * @details A functor rather than a pointer-to-member because nvcc cannot carry a
+ * pointer-to-member through the launch stub it generates for a `__global__` template.
+ * As a type parameter the call still resolves at compile time and inlines away.
+ */
+struct MetricQuality           { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_quality(); } };
+/** @brief Selects ::Triangle::compute_triangle_regularity. */
+struct MetricRegularity        { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_triangle_regularity(); } };
+/** @brief Selects ::Triangle::compute_radius_edge_ratio. */
+struct MetricRadiusEdgeRatio   { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_radius_edge_ratio(); } };
+/** @brief Selects ::Triangle::compute_angle_deviation. */
+struct MetricAngleDeviation    { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_angle_deviation(); } };
+/** @brief Selects ::Triangle::compute_radii_ratio. */
+struct MetricRadiiRatio        { __device__ __forceinline__ float operator()(const Triangle &T) const { return T.compute_radii_ratio(); } };
+
+/**
+ * @brief Evaluates one per-triangle quality metric over the whole mesh.
+ * @details The six quality measures differ only in which ::Triangle method they call, so
+ * the metric is a template parameter rather than a copied kernel, and inlines exactly as
+ * the hand-written kernels did.
+ * @tparam Metric Functor mapping a ::Triangle to its measure.
+ * @param[in] num_triangles Number of faces.
+ * @param[in] vertices Device array of vertex coordinates.
+ * @param[in] triangles Device array of triangle vertex indices.
+ * @param[out] out Device array receiving one value per face.
+ * @param[in] metric The measure to evaluate.
+ * @note Launched with `NTHREADS` threads per block over a 1D grid.
+ */
+template <class Metric>
+__global__ void per_triangle_metric_kernel(
         const uint32_t num_triangles,
         const float3 *__restrict__ vertices,
         const int3 *__restrict__ triangles,
-        float *__restrict__ qualities)
+        float *__restrict__ out,
+        Metric metric)
     {
         uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx < num_triangles)
         {
             int3 tri = triangles[idx];
             Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-            qualities[idx] = T.compute_quality();
+            out[idx] = metric(T);
         }
     }
+
+    /**
+     * @brief Launches a per-triangle quality metric.
+     * @tparam Metric Functor mapping a ::Triangle to its measure.
+     * @param[in] num_triangles Number of faces; zero returns without launching.
+     * @param[out] out Device array receiving one value per face.
+     */
+    template <class Metric>
+    __host__ void launch_per_triangle_metric(
+        const uint32_t num_triangles,
+        const float3 *__restrict__ vertices,
+        const int3 *__restrict__ triangles,
+        float *__restrict__ out,
+        Metric metric)
+    {
+        if (num_triangles == 0) return;
+
+        int threads = NTHREADS;
+        int blocks = (num_triangles + threads - 1) / threads;
+
+        per_triangle_metric_kernel<Metric><<<blocks, threads>>>(
+            num_triangles, vertices, triangles, out, metric);
+    }
+
 
 /**
  * @brief Computes the aspect ratio of every triangle.
@@ -132,107 +191,9 @@ __global__ void compute_aspect_ratio_kernel(
         }
     }
 
-/**
- * @brief Computes the circumradius-to-inradius ratio of every triangle.
- * @details One thread per triangle. The ratio reaches its minimum of 2 for an equilateral
- * triangle and grows without bound as a triangle degenerates, making it a sensitive
- * conditioning measure.
- * @param[in] num_triangles Number of triangles.
- * @param[in] vertices Device array of mesh vertex coordinates.
- * @param[in] triangles Device array of triangle vertex indices.
- * @param[out] ratios Device array of per-triangle radii ratios.
- * @note Launched with `NTHREADS` threads per block over a 1D grid.
- */
-__global__ void compute_radii_ratio_kernel(
-        const uint32_t num_triangles,
-        const float3 *__restrict__ vertices,
-        const int3 *__restrict__ triangles,
-        float *__restrict__ ratios)
-    {
-        uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_triangles)
-        {
-            int3 tri = triangles[idx];
-            Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-            ratios[idx] = T.compute_radii_ratio();
-        }
-    }
 
-/**
- * @brief Computes how close each triangle is to equilateral.
- * @details One thread per triangle, scoring 1 for a perfectly regular triangle and falling
- * towards 0 as edge lengths diverge.
- * @param[in] num_triangles Number of triangles.
- * @param[in] vertices Device array of mesh vertex coordinates.
- * @param[in] triangles Device array of triangle vertex indices.
- * @param[out] regularities Device array of per-triangle regularity scores.
- * @note Launched with `NTHREADS` threads per block over a 1D grid.
- */
-__global__ void compute_triangle_regularity_kernel(
-        const uint32_t num_triangles,
-        const float3 *__restrict__ vertices,
-        const int3 *__restrict__ triangles,
-        float *__restrict__ regularities)
-    {
-        uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_triangles)
-        {
-            int3 tri = triangles[idx];
-            Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-            regularities[idx] = T.compute_triangle_regularity();
-        }
-    }
 
-/**
- * @brief Computes the circumradius-to-shortest-edge ratio of every triangle.
- * @details One thread per triangle. This is the quantity Delaunay refinement bounds, so it
- * is the natural measure when assessing a mesh produced by such an algorithm.
- * @param[in] num_triangles Number of triangles.
- * @param[in] vertices Device array of mesh vertex coordinates.
- * @param[in] triangles Device array of triangle vertex indices.
- * @param[out] ratios Device array of per-triangle radius-edge ratios.
- * @note Launched with `NTHREADS` threads per block over a 1D grid.
- */
-__global__ void compute_radius_edge_ratio_kernel(
-        const uint32_t num_triangles,
-        const float3 *__restrict__ vertices,
-        const int3 *__restrict__ triangles,
-        float *__restrict__ ratios)
-    {
-        uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_triangles)
-        {
-            int3 tri = triangles[idx];
-            Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-            ratios[idx] = T.compute_radius_edge_ratio();
-        }
-    }
 
-/**
- * @brief Computes each triangle's maximum deviation from 60 degrees.
- * @details One thread per triangle, reporting the largest absolute difference between an
- * interior angle and the equilateral ideal. Unlike area-based scores this catches a
- * triangle that is small yet badly shaped.
- * @param[in] num_triangles Number of triangles.
- * @param[in] vertices Device array of mesh vertex coordinates.
- * @param[in] triangles Device array of triangle vertex indices.
- * @param[out] deviations Device array of per-triangle angle deviations, in radians.
- * @note Launched with `NTHREADS` threads per block over a 1D grid.
- */
-__global__ void compute_angle_deviation_kernel(
-        const uint32_t num_triangles,
-        const float3 *__restrict__ vertices,
-        const int3 *__restrict__ triangles,
-        float *__restrict__ deviations)
-    {
-        uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_triangles)
-        {
-            int3 tri = triangles[idx];
-            Triangle T(vertices[tri.x], vertices[tri.y], vertices[tri.z]);
-            deviations[idx] = T.compute_angle_deviation();
-        }
-    }
 
 /**
  * @brief Computes the axis-aligned bounding box of every triangle.
@@ -324,13 +285,8 @@ __global__ void compute_triangle_aabbs_kernel(
         const int3 *__restrict__ triangles,
         float *__restrict__ qualities)
     {
-        if (num_triangles == 0) return;
-        
-        int threads = NTHREADS;
-        int blocks = (num_triangles + threads - 1) / threads;
-        
-        compute_quality_kernel<<<blocks, threads>>>(
-            num_triangles, vertices, triangles, qualities);
+        launch_per_triangle_metric(
+            num_triangles, vertices, triangles, qualities, MetricQuality{});
     }
 
     /**
@@ -371,13 +327,8 @@ __global__ void compute_triangle_aabbs_kernel(
         const int3 *__restrict__ triangles,
         float *__restrict__ ratios)
     {
-        if (num_triangles == 0) return;
-        
-        int threads = NTHREADS;
-        int blocks = (num_triangles + threads - 1) / threads;
-        
-        compute_radii_ratio_kernel<<<blocks, threads>>>(
-            num_triangles, vertices, triangles, ratios);
+        launch_per_triangle_metric(
+            num_triangles, vertices, triangles, ratios, MetricRadiiRatio{});
     }
 
     /**
@@ -394,13 +345,8 @@ __global__ void compute_triangle_aabbs_kernel(
         const int3 *__restrict__ triangles,
         float *__restrict__ regularities)
     {
-        if (num_triangles == 0) return;
-        
-        int threads = NTHREADS;
-        int blocks = (num_triangles + threads - 1) / threads;
-        
-        compute_triangle_regularity_kernel<<<blocks, threads>>>(
-            num_triangles, vertices, triangles, regularities);
+        launch_per_triangle_metric(
+            num_triangles, vertices, triangles, regularities, MetricRegularity{});
     }
 
     /**
@@ -417,13 +363,8 @@ __global__ void compute_triangle_aabbs_kernel(
         const int3 *__restrict__ triangles,
         float *__restrict__ ratios)
     {
-        if (num_triangles == 0) return;
-        
-        int threads = NTHREADS;
-        int blocks = (num_triangles + threads - 1) / threads;
-        
-        compute_radius_edge_ratio_kernel<<<blocks, threads>>>(
-            num_triangles, vertices, triangles, ratios);
+        launch_per_triangle_metric(
+            num_triangles, vertices, triangles, ratios, MetricRadiusEdgeRatio{});
     }
 
     /**
@@ -440,13 +381,8 @@ __global__ void compute_triangle_aabbs_kernel(
         const int3 *__restrict__ triangles,
         float *__restrict__ deviations)
     {
-        if (num_triangles == 0) return;
-        
-        int threads = NTHREADS;
-        int blocks = (num_triangles + threads - 1) / threads;
-        
-        compute_angle_deviation_kernel<<<blocks, threads>>>(
-            num_triangles, vertices, triangles, deviations);
+        launch_per_triangle_metric(
+            num_triangles, vertices, triangles, deviations, MetricAngleDeviation{});
     }
 
     /**
