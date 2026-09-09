@@ -69,11 +69,12 @@ on the **[showcase](https://khoidoo.github.io/conquer3d/)**.
 
 ### Isosurface extraction
 
-<img src="docs/assets/img/fig-algorithms.webp" alt="Five extractors on one signed distance field" width="100%">
+<img src="docs/assets/img/fig-algorithms.webp" alt="Four extractors on one signed distance field" width="100%">
 
-One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed by five
-extractors, with the source mesh on the left. The lower row crops the crease where
-Marching Cubes and Dual Contouring disagree most.
+One signed distance field on a 64³ narrow-band grid of 19,329 cells, meshed by four
+extractors — Marching Cubes, MC Asymptotic, Dual Contouring and Dual Marching Cubes —
+with the source mesh on the left. The lower row crops the crease where Marching Cubes
+and Dual Contouring disagree most.
 
 ### Sharp features from Hermite data
 

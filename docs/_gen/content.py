@@ -174,7 +174,7 @@ FIGURES = [
     ),
     (
         "fig-algorithms", "Isosurface extraction", "Comparison",
-        "One signed distance field meshed by five different extractors.",
+        "One signed distance field meshed by four different extractors.",
         True,
     ),
     (
